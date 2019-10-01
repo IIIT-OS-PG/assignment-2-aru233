@@ -13,8 +13,8 @@
 using namespace std;
 
 #define BUFF_SIZE 2048
-#define PORT2 2002
-#define PORT1 2001
+#define PORT2 2001
+#define PORT1 2002
 
 void *serverThreadFunc(void *ptr);
 void *clientThreadFunc(void *ptr);
@@ -78,7 +78,8 @@ void *clientThreadFunc(void *ptr){
 	*/
 
 	//File receiving code:
-	FILE *fp = fopen("pd_2.pdf" , "wb");
+	FILE *fp = fopen("song_p2C" , "wb");
+	int file_desc=fileno(fp);
 
 	char buffer[BUFF_SIZE]={0};
 
@@ -88,11 +89,15 @@ void *clientThreadFunc(void *ptr){
 		exit(EXIT_FAILURE);
 	}
 	cout<<"File size : Client: "<< file_size<<endl;
-	while ((n = recv(sockfd , buffer , BUFF_SIZE, 0) ) > 0 && file_size > 0){
-		// cout<<"Buff "<<buffer<<endl;
-		fwrite (buffer , sizeof (char), n, fp);
+	int sum_ = 0;
+	while ((n = recv(sockfd , buffer , 47, 0) ) > 0 && file_size > 0){
+		cout<<"Buff peer2 client: "<<buffer<<endl;
+		// cout<<"n "<<n<<endl;
+		// fwrite (buffer , sizeof (char), n, fp);
+		write(file_desc, buffer, n);
 		memset ( buffer , '\0', BUFF_SIZE);
 		file_size = file_size - n;
+		cout<<"BLAH"<<endl;
 	}
 
 	cout<<"File received!"<<endl;

@@ -1,4 +1,3 @@
-//Code for peer : client and server thread running parrallelly, with server able to send msg/file to client
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,12 +14,16 @@
 using namespace std;
 
 #define BUFF_SIZE 2048
-#define PORT2 2002
-#define PORT1 2001
+#define PORT2 2001
+#define PORT1 2002
 
 void *serverThreadFunc(void *ptr);
 void *clientThreadFunc(void *ptr);
-void serveClientRequest(struct sockaddr_in new_sock_addr, int new_sock_fd);
+void *serveRequest(void *ptr);
+
+struct threadData{
+	int sockfd;
+};
 
 int main(){
 
@@ -53,7 +56,7 @@ void *clientThreadFunc(void *ptr){
 
 	struct sockaddr_in serv_addr;
 	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons( PORT2 );
+	serv_addr.sin_port = htons( PORT1 );
 	serv_addr.sin_addr.s_addr=inet_addr("127.0.0.1");
 
 	cout<<"Enter no."<<endl;
@@ -80,7 +83,9 @@ void *clientThreadFunc(void *ptr){
 	*/
 
 	//File receiving code:
-	FILE *fp = fopen("afile_peer1C.txt" , "wb");
+	FILE *fp = fopen("song_p1C" , "wb");
+	// int fp= fopen("afile_peer1C.txt" , "wb");
+	int file_desc=fileno(fp);
 
 	char buffer[BUFF_SIZE]={0};
 
@@ -91,10 +96,12 @@ void *clientThreadFunc(void *ptr){
 	}
 	cout<<"File size : Client: "<< file_size<<endl;
 	while ((n = recv(sockfd , buffer , BUFF_SIZE, 0) ) > 0 && file_size > 0){
-		// cout<<"Buff "<<buffer<<endl;
-		fwrite (buffer , sizeof (char), n, fp);
+		cout<<"Buff peer1 client: "<<buffer<<endl;
+		// fwrite (buffer , sizeof (char), n, fp);
+		write(file_desc, buffer, n);
 		memset ( buffer , '\0', BUFF_SIZE);
 		file_size = file_size - n;
+		cout<<"BLAH"<<endl;
 	}
 
 	cout<<"File received!"<<endl;
@@ -132,6 +139,8 @@ void *serverThreadFunc(void *ptr){
 	}
 	cout<<"Bind successful : server"<<endl;
 
+	int listencount=0;
+
 	/*int listen(int sockfd, int backlog);
 	   The sockfd argument is a file descriptor that refers to a socket of
        type SOCK_STREAM or SOCK_SEQPACKET.
@@ -151,22 +160,39 @@ void *serverThreadFunc(void *ptr){
        Min backlog value can be: 0. There is a system-defined number of maximum connections 
        on any one queue. This prevents processes from hogging system resources by setting 
        the backlog value to be very large and then ignoring all connection requests.*/
-	if(listen(server_socket_fd, 4)!=0){
+	if(listen(server_socket_fd, 5)!=0){
 		cout<<"Error in Listening"<<endl;
 		exit(1);
 	}
 	else{
-		cout<<"Listening now : Server"<<endl;
+		listencount++;
+		cout<<"Listening now : Server "<<endl;
 	}
 
 	// int addrlen=sizeof(new_serv_addr);
 	int addrlen=sizeof(server_addr);
-	// while(1){
-	if((new_server_socket_fd = accept(server_socket_fd,(struct sockaddr*)&server_addr,(socklen_t*)&addrlen))<0){
-	
-	// if((new_server_socket_fd = accept(server_socket_fd,(struct sockaddr*)&new_serv_addr,(socklen_t*)&addrlen))<0){
-		perror("Error in accept");
-		exit(EXIT_FAILURE);
+	while(1){
+		if((new_server_socket_fd = accept(server_socket_fd,(struct sockaddr*)&server_addr,(socklen_t*)&addrlen))<0){
+		
+		// if((new_server_socket_fd = accept(server_socket_fd,(struct sockaddr*)&new_serv_addr,(socklen_t*)&addrlen))<0){
+			perror("Error in accept");
+			exit(EXIT_FAILURE);
+		}
+		else{
+			cout<<"Accept successful : Server "<<endl;
+			pthread_t servethread;
+			struct threadData tdata;
+			tdata.sockfd=new_server_socket_fd;
+
+			int serv_thread_status=pthread_create(&servethread, NULL, serveRequest, (void*)&tdata);
+			if(serv_thread_status<0){
+				perror("Error in creating thread to serve request : Server");
+				exit(EXIT_FAILURE);
+			}
+
+			pthread_detach(servethread);
+			// pthread_join(serverThread, NULL);
+		}
 	}
 
 	cout<<"Accept successful : Server "<<endl;
@@ -185,38 +211,38 @@ void *serverThreadFunc(void *ptr){
 	*/
 
 
-	FILE *fp=fopen("pd.pdf", "rb");
+	// FILE *fp=fopen("pd.pdf", "rb");
 
 
-	/* SEEK_END : It denotes end of the file.
-	   SEEK_SET : It denotes starting of the file.
-	   SEEK_CUR : It denotes file pointer’s current position.*/
+	// /* SEEK_END : It denotes end of the file.
+	//    SEEK_SET : It denotes starting of the file.
+	//    SEEK_CUR : It denotes file pointer’s current position.*/
 
 
-	fseek(fp, 0, SEEK_END);
-	//above means that we move the pointer by 0 distance with respect to end of file i.e pointer now points to end of the file. 
-	int file_size=ftell(fp);
-	cout<<"File size : Server : "<<file_size<<endl;
-	rewind(fp);
+	// fseek(fp, 0, SEEK_END);
+	// //above means that we move the pointer by 0 distance with respect to end of file i.e pointer now points to end of the file. 
+	// int file_size=ftell(fp);
+	// cout<<"File size : Server : "<<file_size<<endl;
+	// rewind(fp);
 
-	if(send(new_server_socket_fd, &file_size, sizeof(file_size), 0)<0){
-		perror("error in sending file size : Server");
-		exit(EXIT_FAILURE);
-	}
+	// if(send(new_server_socket_fd, &file_size, sizeof(file_size), 0)<0){
+	// 	perror("error in sending file size : Server");
+	// 	exit(EXIT_FAILURE);
+	// }
 
-	char Buffer[BUFF_SIZE];
-	int n;
-	while((n=fread(Buffer, sizeof(char), BUFF_SIZE, fp)) > 0 && file_size>0){
-		if(send(new_server_socket_fd, Buffer, n, 0)<0){
-			perror("error in sending file : Server");
-			exit(EXIT_FAILURE);
-		}
-		// cout<<"in buff"<<Buffer<<endl;
-		memset(Buffer, '\0', BUFF_SIZE);
-		file_size=file_size-n;
-	}
+	// char Buffer[BUFF_SIZE];
+	// int n;
+	// while((n=fread(Buffer, sizeof(char), BUFF_SIZE, fp)) > 0 && file_size>0){
+	// 	if(send(new_server_socket_fd, Buffer, n, 0)<0){
+	// 		perror("error in sending file : Server");
+	// 		exit(EXIT_FAILURE);
+	// 	}
+	// 	// cout<<"in buff"<<Buffer<<endl;
+	// 	memset(Buffer, '\0', BUFF_SIZE);
+	// 	file_size=file_size-n;
+	// }
 		
-	cout<<"Send succesful : Server"<<endl;
+	// cout<<"Send succesful : Server"<<endl;
 
 
 
@@ -224,6 +250,46 @@ void *serverThreadFunc(void *ptr){
 	close(new_server_socket_fd);
 }
 
-// void serveClientRequest(struct sockaddr_in new_sock_addr, int new_sock_fd){
+void *serveRequest(void *ptr){
+	cout<<"Inside serveRequest funct"<<endl;
+	FILE *fp=fopen("song.mp3", "rb");
 
-// }
+
+	/* SEEK_END : It denotes end of the file.
+	   SEEK_SET : It denotes starting of the file.
+	   SEEK_CUR : It denotes file pointer’s current position.*/
+
+	struct threadData *tstruct;
+	tstruct=(struct threadData*)ptr;
+	cout<<"Have typecasted the void* "<<endl;
+
+	int fd=tstruct->sockfd;
+
+	cout<<"received fd in parameter is: "<<fd<<endl;
+
+	fseek(fp, 0, SEEK_END);
+	//above means that we move the pointer by 0 distance with respect to end of file i.e pointer now points to end of the file. 
+	int file_size=ftell(fp);
+	cout<<"File size : ServeReq : "<<file_size<<endl;
+	rewind(fp);
+
+	if(send(fd, &file_size, sizeof(file_size), 0)<0){
+		perror("error in sending file size : ServeReq");
+		exit(EXIT_FAILURE);
+	}
+
+	char Buffer[BUFF_SIZE];
+	int n;
+	while((n=fread(Buffer, sizeof(char), BUFF_SIZE, fp)) > 0 && file_size>0){
+		cout<<"in buff"<<Buffer<<endl;
+		if(send(fd, Buffer, n, 0)<0){
+			perror("error in sending file : Server");
+			exit(EXIT_FAILURE);
+		}
+		
+		memset(Buffer, '\0', BUFF_SIZE);
+		file_size=file_size-n;
+	}
+		
+	cout<<"Send succesful : ServeReq"<<endl;
+}
