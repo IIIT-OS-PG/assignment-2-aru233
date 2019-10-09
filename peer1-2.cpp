@@ -9,11 +9,16 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <pthread.h>
 
 using namespace std;
 
-#define BUFF_SIZE 2048
+// #define BUFF_SIZE 2048
+#define BUFF_SIZE 512
+// #define CHUNK 524288 //512KB
+// #define CHUNK 2048
+#define CHUNK 512
 #define PORT2 2001
 #define PORT1 2002
 
@@ -32,7 +37,6 @@ int main(){
 	char *msgClient="In client thread";
 
 	int serv_thread_status=pthread_create(&serverThread, NULL, serverThreadFunc, (void*)msgServer);
-	// thread clientThread(clientThreadFunc);
 	int client_thread_status=pthread_create(&clientThread, NULL, clientThreadFunc, (void*)msgClient);
 	
 
@@ -50,7 +54,7 @@ void *clientThreadFunc(void *ptr){
 	int sockfd=socket(AF_INET, SOCK_STREAM, 0);
 	if(sockfd<0){
 		perror("Socket creation failed : client");
-		exit(EXIT_FAILURE);
+		pthread_exit(NULL);
 	}
 	cout<<"Socket created : client"<<endl;
 
@@ -66,7 +70,7 @@ void *clientThreadFunc(void *ptr){
 	//In (struct sockaddr*)&serv_addr, sockaddr_in doesn't work!
 	if(connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))<0){
 		perror("Connect failed : Client");
-		exit(EXIT_FAILURE);
+		pthread_exit(NULL);
 	}
 	cout<<"Connect successful : Client "<<endl;
 
@@ -76,37 +80,97 @@ void *clientThreadFunc(void *ptr){
 	// recv(sockfd, &msg_len, sizeof(msg_len), 0);
 	if(recv(sockfd , msg , sizeof(msg), 0) < 0){
 		perror("Error in receive : Client");
-		exit(EXIT_FAILURE);
+		pthread_exit(NULL);
 	}
 	cout<<"Msg size received at client: "<< strlen(msg)<<endl;
 	cout<<"Msg received at client: "<< msg<<endl;
 	*/
 
 	//File receiving code:
-	FILE *fp = fopen("song_p1C" , "wb");
+	FILE *fp = fopen("textp1CCCCC.txt" , "wb+");
 	// int fp= fopen("afile_peer1C.txt" , "wb");
-	int file_desc=fileno(fp);
+	// int file_desc=fileno(fp);
 
-	char buffer[BUFF_SIZE]={0};
+	int file_size, temp_file_size, n;
+	int chunk_no=2;
 
-	int file_size, n;
+	if(send(sockfd, &chunk_no, sizeof(chunk_no), 0)<0){
+		perror("Error in sending chunk no.: Client");
+		pthread_exit(NULL);
+	}
+
+	int startPosInFile;
+	startPosInFile=CHUNK*(chunk_no-1);
+	cout<<"Start pos for chunk : Client "<<startPosInFile<<endl;
+	// fseek(fp, startPosInFile, SEEK_SET);
+
 	if(recv(sockfd, &file_size, sizeof(file_size), 0)<0){
 		perror("Error in receive file size: Client");
-		exit(EXIT_FAILURE);
+		pthread_exit(NULL);
 	}
 	cout<<"File size : Client: "<< file_size<<endl;
-	while ((n = recv(sockfd , buffer , BUFF_SIZE, 0) ) > 0 && file_size > 0){
-		cout<<"Buff peer1 client: "<<buffer<<endl;
-		// fwrite (buffer , sizeof (char), n, fp);
-		write(file_desc, buffer, n);
-		memset ( buffer , '\0', BUFF_SIZE);
-		file_size = file_size - n;
-		cout<<"BLAH"<<endl;
+	temp_file_size=file_size;
+
+	int my_buff_size;
+	if(file_size<BUFF_SIZE){
+		my_buff_size=file_size;
+	}
+	else{
+		my_buff_size=BUFF_SIZE;
+	}
+	cout<<"my_buff_size : Client : "<<my_buff_size<<endl;
+
+	char buffer[my_buff_size]={'\0'};
+
+	//creating an empty file
+	// int pos=lseek(file_desc, 0, SEEK_SET);
+	// cout<<"fp b4 null : CLient: "<<pos<<endl;
+	fseek(fp, 0, SEEK_SET);
+	cout<<"fp b4 null : CLient: "<<ftell(fp)<<endl;
+	
+
+	memset ( buffer , '\0', BUFF_SIZE);
+	// exit(0);
+	n=my_buff_size;
+	while (temp_file_size > 0){
+		// cout<<"Buff peer1 client: "<<buffer<<endl;
+		fwrite (buffer , sizeof (char), n, fp);
+		// write(file_desc, buffer, n);
+		// memset ( buffer , '\0', BUFF_SIZE);
+		temp_file_size = temp_file_size - n;
+		// cout<<"BLAH"<<endl;
+	}
+	// fclose(fp);
+	// close(file_desc);
+
+	// fp = fopen("textp1C.txt" , "ab+");
+	// // int fp= fopen("afile_peer1C.txt" , "wb");
+	// file_desc=fileno(fp);
+
+	// lseek(file_desc, 0, SEEK_SET);
+	// fseek(fp, 0, SEEK_SET);
+
+
+	//writing specific chunk to file
+	
+	// lseek(file_desc, startPosInFile, SEEK_SET);
+	fseek(fp, startPosInFile, SEEK_SET);
+
+	temp_file_size=CHUNK;
+	while ((n = recv(sockfd , buffer , my_buff_size, 0) ) > 0 && file_size > 0){
+		cout<<"n : Client: "<<n<<endl;
+		cout<<"Buff peer1 : Client: "<<buffer<<endl;
+		fwrite (buffer , sizeof (char), n, fp);
+		// write(file_desc, buffer, n);
+		memset ( buffer , '\0', my_buff_size);
+		temp_file_size = temp_file_size - n;
+		// cout<<"BLAH"<<endl;
 	}
 
 	cout<<"File received!"<<endl;
 	
 	fclose(fp);
+	// close(file_desc);
 	
 	close(sockfd);
 }
@@ -120,7 +184,7 @@ void *serverThreadFunc(void *ptr){
 	int server_socket_fd, new_server_socket_fd;
 	if((server_socket_fd=socket(AF_INET,SOCK_STREAM,0))<0){
 		cout<<"Error in socket creation"<<endl;
-		exit(1);
+		pthread_exit(NULL);
 	}
 	cout<<"Socket created : server"<<endl;
 
@@ -135,7 +199,7 @@ void *serverThreadFunc(void *ptr){
 	
 	if(bindStatus < 0){
 		cout<<"Error in binding"<<endl;
-		exit(1);
+		pthread_exit(NULL);
 	}
 	cout<<"Bind successful : server"<<endl;
 
@@ -162,7 +226,7 @@ void *serverThreadFunc(void *ptr){
        the backlog value to be very large and then ignoring all connection requests.*/
 	if(listen(server_socket_fd, 5)!=0){
 		cout<<"Error in Listening"<<endl;
-		exit(1);
+		pthread_exit(NULL);
 	}
 	else{
 		listencount++;
@@ -176,7 +240,7 @@ void *serverThreadFunc(void *ptr){
 		
 		// if((new_server_socket_fd = accept(server_socket_fd,(struct sockaddr*)&new_serv_addr,(socklen_t*)&addrlen))<0){
 			perror("Error in accept");
-			exit(EXIT_FAILURE);
+			pthread_exit(NULL);
 		}
 		else{
 			cout<<"Accept successful : Server "<<endl;
@@ -187,13 +251,15 @@ void *serverThreadFunc(void *ptr){
 			int serv_thread_status=pthread_create(&servethread, NULL, serveRequest, (void*)&tdata);
 			if(serv_thread_status<0){
 				perror("Error in creating thread to serve request : Server");
-				exit(EXIT_FAILURE);
+				pthread_exit(NULL);
 			}
 
-			pthread_detach(servethread);
-			// pthread_join(serverThread, NULL);
+			// pthread_detach(servethread);
+			pthread_join(servethread, NULL);
+			
 		}
 	}
+	
 
 	cout<<"Accept successful : Server "<<endl;
 
@@ -204,55 +270,21 @@ void *serverThreadFunc(void *ptr){
 	// size_t msg_len=strlen(msg);
 	if(send(new_server_socket_fd, msg, sizeof(msg), 0)<0){
 		perror("error in send : Server");
-		exit(EXIT_FAILURE);
+		pthread_exit(NULL);
 	}
 	cout<<"Msg size sent by Server "<<strlen(msg)<<endl;
 	cout<<"Msg sent by Server "<<msg<<endl;
 	*/
 
 
-	// FILE *fp=fopen("pd.pdf", "rb");
-
-
-	// /* SEEK_END : It denotes end of the file.
-	//    SEEK_SET : It denotes starting of the file.
-	//    SEEK_CUR : It denotes file pointer’s current position.*/
-
-
-	// fseek(fp, 0, SEEK_END);
-	// //above means that we move the pointer by 0 distance with respect to end of file i.e pointer now points to end of the file. 
-	// int file_size=ftell(fp);
-	// cout<<"File size : Server : "<<file_size<<endl;
-	// rewind(fp);
-
-	// if(send(new_server_socket_fd, &file_size, sizeof(file_size), 0)<0){
-	// 	perror("error in sending file size : Server");
-	// 	exit(EXIT_FAILURE);
-	// }
-
-	// char Buffer[BUFF_SIZE];
-	// int n;
-	// while((n=fread(Buffer, sizeof(char), BUFF_SIZE, fp)) > 0 && file_size>0){
-	// 	if(send(new_server_socket_fd, Buffer, n, 0)<0){
-	// 		perror("error in sending file : Server");
-	// 		exit(EXIT_FAILURE);
-	// 	}
-	// 	// cout<<"in buff"<<Buffer<<endl;
-	// 	memset(Buffer, '\0', BUFF_SIZE);
-	// 	file_size=file_size-n;
-	// }
-		
-	// cout<<"Send succesful : Server"<<endl;
-
-
-
 	close(server_socket_fd);
-	close(new_server_socket_fd);
+	// close(new_server_socket_fd);
 }
 
 void *serveRequest(void *ptr){
+	char *filenm="text.txt";
 	cout<<"Inside serveRequest funct"<<endl;
-	FILE *fp=fopen("song.mp3", "rb");
+	FILE *fp=fopen(filenm, "rb");
 
 
 	/* SEEK_END : It denotes end of the file.
@@ -265,31 +297,82 @@ void *serveRequest(void *ptr){
 
 	int fd=tstruct->sockfd;
 
-	cout<<"received fd in parameter is: "<<fd<<endl;
+	// cout<<"received fd in parameter is: "<<fd<<endl;
 
-	fseek(fp, 0, SEEK_END);
-	//above means that we move the pointer by 0 distance with respect to end of file i.e pointer now points to end of the file. 
-	int file_size=ftell(fp);
-	cout<<"File size : ServeReq : "<<file_size<<endl;
-	rewind(fp);
+	int chunk_no;
+	if(recv(fd, &chunk_no, sizeof(chunk_no), 0)<0){
+		perror("Error in receive chunk no.: Server");
+		pthread_exit(NULL);
+	}
+
+	cout<<"Chunk no. recvd in ServReq "<<chunk_no<<endl;
+	
+
+	/*File size:*/
+	struct stat st;
+	stat(filenm, &st);
+	int file_size = st.st_size;
+	cout<<"File size : ServReq : "<<file_size<<endl;
+
+	/*Finding file size:	
+	// fseek(fp, 0, SEEK_END);
+	// //above means that we move the pointer by 0 distance with respect to end of file i.e pointer now points to end of the file. 
+	// int file_size=ftell(fp);
+	// cout<<"File size : ServReq : "<<file_size<<endl;
+	// rewind(fp);
+	*/
 
 	if(send(fd, &file_size, sizeof(file_size), 0)<0){
-		perror("error in sending file size : ServeReq");
-		exit(EXIT_FAILURE);
+		perror("error in sending file size : ServReq");
+		pthread_exit(NULL);
 	}
-
-	char Buffer[BUFF_SIZE];
+	int my_buff_size;
+	if(file_size<BUFF_SIZE){
+		my_buff_size=file_size;
+	}
+	else{
+		my_buff_size=BUFF_SIZE;
+	}
+	char Buffer[my_buff_size];
 	int n;
-	while((n=fread(Buffer, sizeof(char), BUFF_SIZE, fp)) > 0 && file_size>0){
-		cout<<"in buff"<<Buffer<<endl;
-		if(send(fd, Buffer, n, 0)<0){
-			perror("error in sending file : Server");
-			exit(EXIT_FAILURE);
+
+	if(CHUNK*(chunk_no-1)<=file_size){
+		int startPosInFile=CHUNK*(chunk_no-1);
+		fseek(fp, startPosInFile, SEEK_SET);
+		cout<<"File ptr pos before : ServReq : "<<ftell(fp)<<endl;
+
+		cout<<"fp start pos : ServReq : "<<startPosInFile<<endl;
+		// cout<<"SEEK_SET : ServReq : "<<SEEK_SET<<endl;
+
+
+		int temp_file_size=CHUNK;
+
+		cout<<"my_buff_size : ServReq : "<<my_buff_size<<endl;
+		cout<<"temp_file_size : ServReq :"<<temp_file_size<<endl;
+
+		// while(())
+		while(temp_file_size>0){
+			n=fread(Buffer, sizeof(char), my_buff_size, fp);
+			cout<<"in buff: ServReq: "<<Buffer<<endl;
+			if(n < 0) {
+				cout << "extra read !!" << endl;
+				break;
+			}
+			
+			if(send(fd, Buffer, n, 0)<0){
+				perror("error in sending file : ServReq");
+				pthread_exit(NULL);
+			}
+			
+			memset(Buffer, '\0', my_buff_size);
+			temp_file_size=temp_file_size-n;
 		}
-		
-		memset(Buffer, '\0', BUFF_SIZE);
-		file_size=file_size-n;
+
+		cout<<"File ptr pos now : ServReq : "<<ftell(fp)<<endl;
 	}
+	close(fd);	
+	fclose(fp);
+	
 		
 	cout<<"Send succesful : ServeReq"<<endl;
 }
