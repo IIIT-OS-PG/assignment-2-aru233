@@ -25,13 +25,27 @@ using namespace std;
 #define PORT1 2002
 #define SERVER_THREADS 4
 #define CLIENT_THREADS 3
+#define NOT_LOGGED_IN -2
+#define IN_LIST 2
+#define NOT_IN_GROUP -3
+#define IS_OWNER -4
+#define NOT_PENDING_JOIN -5
+#define NO_GROUPS -6
+#define NO_USER -7
 
 pthread_mutex_t mlock;
+
 
 void *serverThreadFunc(void *ptr);
 void *clientThreadFunc(void *ptr);
 void *serveRequest(void *ptr);
 void *fileDownloadFunc(void *ptr);
+
+struct portNums{
+	int serverPortNo;
+	int trackerPortNo;
+};
+typedef struct portNums struct_portNums;
 
 struct threadData{
 	int sockfd;
@@ -62,7 +76,7 @@ typedef struct userDetail struct_userDet;
 
 
 string sha256_hash_string (unsigned char hash[SHA256_DIGEST_LENGTH]){
-   cout<<"Entered sha256_hash_string()"<<endl;
+   // cout<<"Entered sha256_hash_string()"<<endl;
    stringstream ss;
    for(int i = 0; i < SHA256_DIGEST_LENGTH; i++)
     {
@@ -72,7 +86,7 @@ string sha256_hash_string (unsigned char hash[SHA256_DIGEST_LENGTH]){
 }
 
 string sha256(const string str){
-	cout<<"Entered sha256()"<<endl;
+	// cout<<"Entered sha256()"<<endl;
     unsigned char hash[SHA256_DIGEST_LENGTH];
     SHA256_CTX sha256;
     SHA256_Init(&sha256);
@@ -87,12 +101,12 @@ string sha256(const string str){
 }
 
 string sha256_of_chunks(FILE* f,int size){
-	cout<<"Entered sha256_of_chunks()"<<endl;
+	// cout<<"Entered sha256_of_chunks()"<<endl;
 	if(!f){
-		cout<<"OOPS! Returning Null"<<endl;
+		// cout<<"OOPS! Returning Null"<<endl;
 		return NULL;
 	}
-	cout<<"no NULL!"<<endl;
+	// cout<<"no NULL!"<<endl;
 	string finalSha="";
 	unsigned char hashcal[SHA256_DIGEST_LENGTH];
 	SHA256_CTX sha256;
@@ -113,25 +127,25 @@ string sha256_of_chunks(FILE* f,int size){
 		size -= n;
 	}
 	fclose(f);
-	cout<<"Exiting sha256_of_chunks()"<<endl;
+	// cout<<"Exiting sha256_of_chunks()"<<endl;
 	return finalSha;
 }
 
 int main(){
 
 	pthread_t serverThread, clientThread;
-	struct_tData serverData, clientData;
+	struct_portNums portDet;
 	// char *msgServer="In server thread";
 	// char *msgClient="In client thread";
 
 	cout<<"Enter Server Port"<<endl;
-	cin>>serverData.portNo;
+	cin>>portDet.serverPortNo;
 
-	cout<<"Enter Client Port"<<endl;
-	cin>>clientData.portNo;
+	cout<<"Enter Tracker Port"<<endl;
+	cin>>portDet.trackerPortNo;
 
-	int serv_thread_status=pthread_create(&serverThread, NULL, serverThreadFunc, (void*)&serverData);
-	int client_thread_status=pthread_create(&clientThread, NULL, clientThreadFunc, (void*)&clientData);
+	int serv_thread_status=pthread_create(&serverThread, NULL, serverThreadFunc, (void*)&portDet);
+	int client_thread_status=pthread_create(&clientThread, NULL, clientThreadFunc, (void*)&portDet);
 	
 
 	pthread_join(serverThread, NULL);
@@ -144,9 +158,10 @@ int main(){
 
 void *clientThreadFunc(void *ptr){
 	// cout<<(char*)ptr<<endl;
-
-	struct_tData *clientData=(struct_tData*)ptr;
-	int portNum=clientData->portNo;
+	int opt=1;
+	struct_portNums *clientData=(struct_portNums*)ptr;
+	int portNumofTracker=clientData->trackerPortNo;
+	int portNumofServer=clientData->serverPortNo;
 	int sockfd=socket(AF_INET, SOCK_STREAM, 0);
 	if(sockfd<0){
 		perror("Socket creation failed : client");
@@ -154,26 +169,52 @@ void *clientThreadFunc(void *ptr){
 	}
 	cout<<"Socket created : client"<<endl;
 
-	struct sockaddr_in serv_addr;
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons( portNum );
-	serv_addr.sin_addr.s_addr=inet_addr("127.0.0.1");
 
+
+	struct sockaddr_in serv_addr_forTrackerConnect, serv_addr_forClient;
+
+	memset(&serv_addr_forTrackerConnect,'\0',sizeof(serv_addr_forTrackerConnect));
+	memset(&serv_addr_forClient,'\0',sizeof(serv_addr_forClient));
+
+	serv_addr_forTrackerConnect.sin_family = AF_INET;
+	serv_addr_forTrackerConnect.sin_port = htons(portNumofTracker);
+	serv_addr_forTrackerConnect.sin_addr.s_addr=inet_addr("127.0.0.1");
+
+	serv_addr_forClient.sin_family = AF_INET;
+	serv_addr_forClient.sin_port = htons(portNumofServer);
+	serv_addr_forClient.sin_addr.s_addr=inet_addr("127.0.0.1");
+
+	if(setsockopt(sockfd, SOL_SOCKET,SO_REUSEADDR|SO_REUSEPORT,&opt,sizeof(opt))){
+		cout<<"setsockopt"<<endl;
+		exit(EXIT_FAILURE);
+	}
+
+	//Binding the peer's Client too....with the same portNo. and IP as the peer's Server
+	int bindStatus = bind(sockfd,(struct sockaddr*)&serv_addr_forClient,sizeof(serv_addr_forClient));
+	
+	if(bindStatus < 0){
+		cout<<"Error in binding:Client"<<endl;
+		pthread_exit(NULL);
+	}
+	cout<<"Bind successful:Client"<<endl;
 	// cout<<"Enter no."<<endl;
 	// int num;
 	// cin>>num;
 
 	//In (struct sockaddr*)&serv_addr, sockaddr_in doesn't work!
-	if(connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))<0){
+	if(connect(sockfd, (struct sockaddr*)&serv_addr_forTrackerConnect, sizeof(serv_addr_forTrackerConnect))<0){
 		perror("Connect failed : Client");
 		pthread_exit(NULL);
 	}
 	cout<<"Connect successful : Client "<<endl;
 	vector<string> cmdVec;
 	cin.ignore();
+	string USERID="";
+	// int ackk=3;
+	int ack, ack1;
 	while(true){
 		string cmd, cmd1;
-		int ack;
+		
 		cout<<"Enter command"<<endl;
 		getline(cin, cmd);
 		cout<<"Command entered:Client:"<<cmd<<endl;
@@ -182,6 +223,10 @@ void *clientThreadFunc(void *ptr){
 		cout<<"Commd name : Client: "<<cmdName<<endl;
 		// cout<<"Commd name1 : Client: "<<cmd1<<endl;
 		cmdVec.clear();
+		cout<<endl;
+
+		//**********************************************************************************//
+		//Create User
 		if(strcmp(cmdName, "create_user")==0){
 			cout<<"Inside create_user:Client"<<endl;
 			while((cmdName=strtok(NULL," "))!=NULL){
@@ -189,23 +234,416 @@ void *clientThreadFunc(void *ptr){
 				cmdVec.push_back(cmdName);
 				cout<<cmdName<<endl;
 			}
-			cout<<"outside vec while"<<endl;
+			// cout<<"outside vec while"<<endl;
 			if(cmdVec.size()!=2){
 				cout<<"Wrong command format; See: create_user​ <user_id> <passwd>"<<endl;
 				// pthread_exit(NULL);
 				continue;
 			}
-			cout<<"Entered create_user: Client: "<<endl;
+			cout<<"Entered create_user:Client: Cmd being sent="<<cmd<<endl;
 			if(send(sockfd,(char*)cmd.c_str(),cmd.length(),0)<0){
-				cout<<"unsuccessful cmd send:Client"<<endl;
+				cout<<"unsuccessful create_user cmd send:Client"<<endl;
 			}
 			//Receive acknowledgement
 			recv(sockfd, &ack, sizeof(ack),0);
-			cout<<"Ack received in create_user: Client: "<<ack<<endl;
+			if(ack==-1){
+				cout<<"Err: User already exists!! Try again"<<endl;
+			}
+			else{
+				cout<<"Created user!: Client: "<<ack<<endl;
+			}
 
 		}
+
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "login")==0){
+			cout<<"Inside login:Client"<<endl;
+			if(USERID!=""){//a user is already logged in
+				cout<<"SORRY! Another user already logged in"<<endl;
+				continue;
+				//TODO: set USERID as NULL at time of logout
+			}
+			while((cmdName=strtok(NULL," "))!=NULL){
+				// cout<<"whaaiiil"<<cmdName<<endl;
+				cmdVec.push_back(cmdName);
+				cout<<cmdName<<endl;
+			}
+			// cout<<"outside vec while"<<endl;
+			if(cmdVec.size()!=2){
+				cout<<"Wrong command format; See: login <user_id> <passwd>"<<endl;
+				// pthread_exit(NULL);
+				continue;
+			}
+			cout<<"Entered login:Client: Cmd being sent="<<cmd<<endl;
+			if(send(sockfd,(char*)cmd.c_str(),cmd.length(),0)<0){
+				cout<<"unsuccessful login cmd send:Client"<<endl;
+			}
+			//Receive acknowledgement
+			recv(sockfd, &ack, sizeof(ack),0);
+			if(ack==-1){
+				cout<<"Either user doesnt exist or wrong password sent!!Try again"<<endl;
+				USERID="";
+				// continue;
+			}
+			else{
+				cout<<"Logged in!: Client: "<<ack<<endl;
+				USERID=cmdVec[0];
+			}
+			
+		}
+
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "create_group")==0){
+			cmdVec.push_back(cmdName);//Need to push_back "create_group" too in the vector so as to make the whole command
+			cout<<"Inside create_group:CLient"<<endl;
+			while((cmdName=strtok(NULL," "))!=NULL){
+				// cmdName=strtok(NULL," ");
+				cmdVec.push_back(cmdName);
+			}
+			if(cmdVec.size()!=2){
+				cout<<"Wrong command format; See: create_group <group_id>"<<endl;
+				// pthread_exit(NULL);
+				continue;
+			}
+			cout<<"Entered create_group: Client"<<endl;
+			string grpID=cmdVec[1];
+			
+			// if(USERID==""){
+			// 	cout<<"User not logged in correctly"<<endl;
+			// 	continue;
+			// }
+			if(USERID==""){
+				cout<<"No User logged in yet! Users need to login before they can create groups!!"<<endl;
+				continue;
+			}
+			string cmdToSend=cmdVec[0]+" "+grpID+" "+USERID;
+			cout<<"Sending this cmd to tracker for create_group: "<<cmdToSend<<endl;
+
+			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
+				cout<<"Unable to send cmd(in create_group):Client"<<endl;
+			}
+			//Receive acknowledgement
+			recv(sockfd, &ack, sizeof(ack),0);
+			if(ack==-1){
+				cout<<"Unsuccessful create_group- Already exists!!Try again"<<endl;
+			}
+			else if(ack==NO_USER){
+				cout<<"No User yet! Users need to login before they can create groups!!"<<endl;
+			}
+			else if(ack==NOT_LOGGED_IN){
+				cout<<"User not logged in properly!!"<<endl;
+			}
+			else{
+				cout<<"Group Created!:Client: "<<ack<<endl;
+			}
+			
+		}
+
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "join_group")==0){
+			cmdVec.push_back(cmdName);//Need to push_back "join_group" too in the vector so as to make the whole command
+			cout<<"Inside join_group:CLient"<<endl;
+			while((cmdName=strtok(NULL," "))!=NULL){
+				// cmdName=strtok(NULL," ");
+				cmdVec.push_back(cmdName);
+			}
+			if(cmdVec.size()!=2){
+				cout<<"Wrong command format; See: join_group <group_id>"<<endl;
+				// pthread_exit(NULL);
+				continue;
+			}
+			cout<<"Entered join_group: Client"<<endl;
+			string grpID=cmdVec[1];
+
+			if(USERID==""){
+				cout<<"No User logged in yet! Users need to login before they can join/create groups!!"<<endl;
+				continue;
+			}
+			
+			string cmdToSend=cmdVec[0]+" "+grpID+" "+USERID;
+			cout<<"Sending this cmd to tracker for join_group: "<<cmdToSend<<endl;
+
+			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
+				cout<<"Unable to send cmd(in join_group):Client"<<endl;
+			}
+			//Receive acknowledgement
+			recv(sockfd, &ack, sizeof(ack),0);
+			if(ack==-1){
+				cout<<"Unsuccessful join_group!!Try again"<<endl;
+			}
+			else if(ack==NOT_LOGGED_IN){
+				cout<<"User not logged in properly!!"<<endl;
+			}
+			else if(ack==IN_LIST){
+				cout<<"User already in Pending Requests' List!!"<<endl;
+			}
+			else{
+				cout<<"Group Joined!:Client: "<<ack<<endl;
+			}
+			
+		}
+
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "leave_group")==0){
+			cmdVec.push_back(cmdName);//Need to push_back "leave_group" too in the vector so as to make the whole command
+			cout<<"Inside leave_group:CLient"<<endl;
+			while((cmdName=strtok(NULL," "))!=NULL){
+				// cmdName=strtok(NULL," ");
+				cmdVec.push_back(cmdName);
+			}
+			if(cmdVec.size()!=2){
+				cout<<"Wrong command format; See: leave_group <group_id>"<<endl;
+				// pthread_exit(NULL);
+				continue;
+			}
+			cout<<"Entered leave_group: Client"<<endl;
+			string grpID=cmdVec[1];
+
+			if(USERID==""){
+				cout<<"No User logged in yet! Invalid leave_group request!!"<<endl;
+				continue;
+			}
+
+			string cmdToSend=cmdVec[0]+" "+grpID+" "+USERID;
+			cout<<"Sending this cmd to tracker for leave_group: "<<cmdToSend<<endl;
+
+			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
+				cout<<"Unable to send cmd(in leave_group):Client"<<endl;
+			}
+			//Receive acknowledgement
+			recv(sockfd, &ack, sizeof(ack),0);
+			if(ack==-1){
+				cout<<"No such group!!Try again"<<endl;
+			}
+			else if(ack==NOT_LOGGED_IN){
+				cout<<"User not logged in properly!!"<<endl;
+			}
+			else if(ack==NOT_IN_GROUP){
+				cout<<"User not a member of the group!!"<<endl;
+			}
+			else if(ack==IS_OWNER){
+				cout<<"User is the owner of the group; He can't leave it!!"<<endl;
+			}
+			else{
+				cout<<"Left group!:Client:"<<ack<<endl;
+			}
+			
+		}
+
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "list_requests")==0){
+			cmdVec.push_back(cmdName);//Need to push_back "list_requests" too in the vector so as to make the whole command
+			cout<<"Inside list_requests:CLient"<<endl;
+			while((cmdName=strtok(NULL," "))!=NULL){
+				// cmdName=strtok(NULL," ");
+				cmdVec.push_back(cmdName);
+			}
+			if(cmdVec.size()!=2){
+				cout<<"Wrong command format; See: list_requests <group_id>"<<endl;
+				// pthread_exit(NULL);
+				continue;
+			}
+			cout<<"Entered list_requests: Client"<<endl;
+			string grpID=cmdVec[1];
+
+			if(USERID==""){
+				cout<<"No User logged in yet! Can't list pending join requests!!"<<endl;
+				continue;
+			}
+
+			string cmdToSend=cmdVec[0]+" "+grpID+" "+USERID;
+			cout<<"Sending this cmd to tracker for list_requests: "<<cmdToSend<<endl;
+
+			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
+				cout<<"Unable to send cmd(in list_requests):Client"<<endl;
+			}
+			// cout<<"...OK..."<<endl;
+			int szeOfList;
+			//Receive size of listOfPendingReq from tracker
+			recv(sockfd, &szeOfList, sizeof(szeOfList),0);
+			// cout<<"Rcvd1"<<endl;
+			cout<<"Rcvd list size:Client:"<<szeOfList<<endl;
+
+			//List size rcvd acknowledgement
+			send(sockfd, &ack, sizeof(ack), 0);
+			// cout<<"Send ack1"<<endl;
+
+			char listele[2048];
+			cout<<"The pending requests are:"<<endl;
+			//If recvd szeOfList==0, won't enter for()
+			for(int i=0;i<szeOfList;i++){
+				// if(i==0) cout<<"..rcving list elems..."<<endl;
+				recv(sockfd, listele, sizeof(listele),0);
+				cout<<"Rcvd2"<<endl;
+				send(sockfd, &ack, sizeof(ack), 0);
+				cout<<"Send2"<<endl;
+				cout<<listele<<" ";
+			}
+			cout<<endl;
+
+			//Receive acknowledgement from tracker
+			recv(sockfd, &ack, sizeof(ack),0);
+			cout<<"Rcvd ack3"<<endl;
+			if(ack==-1){
+				cout<<"No such group!!Try again"<<endl;
+			}
+			else if(ack==NOT_LOGGED_IN){
+				cout<<"User not logged in properly!!"<<endl;
+			}
+			else{
+				cout<<"Successfully listed pending requests!:Client:"<<ack<<endl;
+			}
+			
+		}
+
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "accept_request")==0){
+			cmdVec.push_back(cmdName);//Need to push_back "accept_request" too in the vector so as to make the whole command
+			cout<<"Inside accept_request:Client"<<endl;
+			while((cmdName=strtok(NULL," "))!=NULL){
+				// cmdName=strtok(NULL," ");
+				cmdVec.push_back(cmdName);
+			}
+			if(cmdVec.size()!=3){
+				cout<<"Wrong command format; See: accept_request <group_id> <userid>"<<endl;
+				// pthread_exit(NULL);
+				continue;
+			}
+			cout<<"Entered accept_request: Client"<<endl;
+			string grpID=cmdVec[1];
+			string userId=cmdVec[2];
+			if(USERID==""){
+				cout<<"User not logged in yet! Needs to log in before accept_request!!"<<endl;
+				continue;
+			}
+			string cmdToSend=cmdVec[0]+" "+grpID+" "+userId;
+			cout<<"Sending this cmd to tracker for accept_request: "<<cmdToSend<<endl;
+
+			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
+				cout<<"Unable to send cmd(in accept_request):Client"<<endl;
+			}
+			//Receive acknowledgement from tracker
+			recv(sockfd, &ack, sizeof(ack),0);
+			// cout<<"Rcvd ack3"<<endl;
+			if(ack==-1){
+				cout<<"No such group!!Try again"<<endl;
+			}
+			else if(ack==NOT_PENDING_JOIN){
+				cout<<"User not in pending join request"<<endl;
+			}
+			// else if(ack==NOT_LOGGED_IN){
+			// 	cout<<"User not logged in properly!!"<<endl;
+			// }
+			else{
+				cout<<"Successfully accepted pending join request!:Client:"<<ack<<endl;
+			}
+			
+		}
+
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "list_groups")==0){
+			// cmdVec.push_back(cmdName);//Need to push_back "list_groups" too in the vector so as to make the whole command
+			cout<<"Inside list_groups:Client"<<endl;
+			cout<<"Entered list_groups: Client"<<endl;
+
+			if(USERID==""){
+				cout<<"No Users logged in yet! Can't list groups!!"<<endl;
+				continue;
+			}
+			string cmdToSend=cmdName;
+			cout<<"Sending this cmd to tracker for list_groups: "<<cmdToSend<<endl;
+			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
+				cout<<"Unable to send cmd(in list_groups):Client"<<endl;
+			}
+			int szeOfMap;
+			//Receive size of map from tracker
+			recv(sockfd, &szeOfMap, sizeof(szeOfMap),0);
+			// cout<<"Rcvd1"<<endl;
+			cout<<"Rcvd map size:Client:"<<szeOfMap<<endl;
+
+			//Map size rcvd acknowledgement
+			send(sockfd, &ack, sizeof(ack), 0);
+			// cout<<"Send ack1"<<endl;
+
+			char listele[2048];
+			cout<<"The groups are:"<<endl;
+			for(int i=0;i<szeOfMap;i++){
+				// if(i==0) cout<<"..rcving list elems..."<<endl;
+				recv(sockfd, listele, sizeof(listele),0);
+				// cout<<"Rcvd2"<<endl;
+				send(sockfd, &ack, sizeof(ack), 0);
+				// cout<<"Send2"<<endl;
+				cout<<listele<<" ";
+			}
+			cout<<endl;
+
+			//Receive acknowledgement from tracker
+			recv(sockfd, &ack, sizeof(ack),0);
+			// cout<<"Rcvd ack3"<<endl;
+			cout<<"Successfully listed the groups!:Client:"<<ack<<endl;	
+		}
+
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "list_files")==0){
+			cmdVec.push_back(cmdName);//Need to push_back "list_files" too in the vector so as to make the whole command
+			cout<<"Inside list_files:Client"<<endl;
+			while((cmdName=strtok(NULL," "))!=NULL){
+				// cmdName=strtok(NULL," ");
+				cmdVec.push_back(cmdName);
+			}
+			if(cmdVec.size()!=2){
+				cout<<"Wrong command format; See: list_files​ <group_id>"<<endl;
+				continue;
+			}
+			cout<<"Entered list_files:Client"<<endl;
+			string grpID=cmdVec[1];
+
+			if(USERID==""){
+				cout<<"No Users logged in yet! Can't list files!!"<<endl;
+				continue;
+			}
+			string cmdToSend=cmdVec[0]+" "+grpID;
+			cout<<"Sending this cmd to tracker for list_files: "<<cmdToSend<<endl;
+			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
+				cout<<"Unable to send cmd(in list_files):Client"<<endl;
+			}
+			int szeOfList;
+			//Receive size of map from tracker
+			recv(sockfd, &szeOfList, sizeof(szeOfList),0);
+			// cout<<"Rcvd1"<<endl;
+			cout<<"Rcvd map size:Client:"<<szeOfList<<endl;
+
+			//Map size rcvd acknowledgement
+			send(sockfd, &ack, sizeof(ack), 0);
+			// cout<<"Send ack1"<<endl;
+
+			char listele[2048];
+			cout<<"The shareable files in group "<<grpID<<" are:"<<endl;
+			for(int i=0;i<szeOfList;i++){
+				// if(i==0) cout<<"..rcving list elems..."<<endl;
+				recv(sockfd, listele, sizeof(listele),0);
+				// cout<<"Rcvd2"<<endl;
+				send(sockfd, &ack, sizeof(ack), 0);
+				// cout<<"Send2"<<endl;
+				cout<<listele<<" ";
+			}
+			cout<<endl;
+
+			//Receive acknowledgement from tracker
+			recv(sockfd, &ack, sizeof(ack),0);
+			// cout<<"Rcvd ack3"<<endl;
+			if(ack==-1){
+				cout<<"The group doesn't exist!:Client:"<<ack<<endl;
+			}
+			else{
+				cout<<"Successfully listed the shareable files!:Client:"<<ack<<endl;	
+			}			
+		}
+
+		//**********************************************************************************//
+		//Upload file
 		else if(strcmp(cmdName, "upload_file")==0){
-			cmdVec.push_back(cmdName);//Need to push_back "uploadd_file" too in the vector so as to make the whole command
+			cmdVec.push_back(cmdName);//Need to push_back "upload_file" too in the vector so as to make the whole command
 			cout<<"Inside upload_file:CLient"<<endl;
 			while((cmdName=strtok(NULL," "))!=NULL){
 				// cmdName=strtok(NULL," ");
@@ -447,8 +885,9 @@ void *fileDownloadFunc(void *ptr){
 
 void *serverThreadFunc(void *ptr){
 
-	struct_tData *serverData=(struct_tData*)ptr;
-	int portNum=serverData->portNo;
+	struct_portNums *serverData=(struct_portNums*)ptr;
+	int portNum=serverData->serverPortNo;
+	int opt=1;
 	// cout<<(char*)ptr<<endl;
 	struct sockaddr_in server_addr;
 	struct sockaddr_in new_serv_addr;
@@ -466,12 +905,16 @@ void *serverThreadFunc(void *ptr){
 	server_addr.sin_family=AF_INET;
 	server_addr.sin_port=htons(portNum);
 	server_addr.sin_addr.s_addr=inet_addr("127.0.0.1");
-	
+
+	if(setsockopt(server_socket_fd, SOL_SOCKET,SO_REUSEADDR|SO_REUSEPORT,&opt,sizeof(opt))){
+		cout<<"setsockopt"<<endl;
+		exit(EXIT_FAILURE);
+	}	
 
 	int bindStatus = bind(server_socket_fd,(struct sockaddr*)&server_addr,sizeof(server_addr));
 	
 	if(bindStatus < 0){
-		cout<<"Error in binding"<<endl;
+		cout<<"Error in binding:Server"<<endl;
 		pthread_exit(NULL);
 	}
 	cout<<"Bind successful : server"<<endl;
