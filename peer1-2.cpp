@@ -69,6 +69,8 @@ struct userDetail{
 typedef struct userDetail struct_userDet;
 
 
+
+
 // struct upl_clientDetail{
 // 	int sockfd;
 
@@ -103,9 +105,9 @@ string sha256(const string str){
 }
 
 string sha256_of_chunks(FILE* f,int size){
-	// cout<<"Entered sha256_of_chunks()"<<endl;
+	cout<<"Entered sha256_of_chunks()"<<endl;
 	if(!f){
-		// cout<<"OOPS! Returning Null"<<endl;
+		cout<<"OOPS! Returning Null"<<endl;
 		return NULL;
 	}
 	// cout<<"no NULL!"<<endl;
@@ -125,13 +127,81 @@ string sha256_of_chunks(FILE* f,int size){
 		string outBuf=sha256_hash_string(hashcal);
 		string ans=outBuf.substr(0,20);
 		finalSha += ans;
+		cout<<"sha piece in sha256_of_chunks "<<ans<<endl;
 		memset(buffer,'\0',512);
 		size -= n;
 	}
 	fclose(f);
-	// cout<<"Exiting sha256_of_chunks()"<<endl;
+	cout<<"Exiting sha256_of_chunks()"<<endl;
 	return finalSha;
 }
+
+void createEmptyFile(string filename, int file_size){
+	FILE *fp = fopen((char*)filename.c_str() , "wb+");
+
+	int temp_file_size, n;
+	temp_file_size=file_size;
+
+	int my_buff_size;
+	if(file_size<BUFF_SIZE){
+		my_buff_size=file_size;
+	}
+	else{
+		my_buff_size=BUFF_SIZE;
+	}
+	// cout<<"my_buff_size : Client : "<<my_buff_size<<endl;
+
+	char buffer[my_buff_size]={'\0'};
+	fseek(fp, 0, SEEK_SET);
+	// cout<<"fp b4 null : CLient: "<<ftell(fp)<<endl;	
+
+	memset ( buffer , '\0', BUFF_SIZE);
+	n=my_buff_size;
+	while (temp_file_size > 0){
+		// cout<<"Buff peer1 client: "<<buffer<<endl;
+		fwrite (buffer , sizeof (char), n, fp);
+		memset ( buffer , '\0', BUFF_SIZE);
+		temp_file_size = temp_file_size - n;
+		// cout<<"BLAH"<<endl;
+	}
+	fclose(fp);	
+	cout<<"Null file created : Client"<<endl;
+}
+
+// void connectToSeeders(vector<pair<string,int> >& seederVec, vector<vector<int> >& seederChunkVec, int sockfd){
+// 	int seederVecSize=seederVec.size();
+// 	for(int i=0;i<seederVecSize;i++){
+// 		int opt=1;
+// 		int portNum=seederVec[i].second;
+// 		string ip=seederVec[i].first;
+// 		cout<<"Trying to connect to server with:"<<endl;
+// 		cout<<"portNum in connectToSeeders:"<<portNum<<endl;
+// 		cout<<"ip in connectToSeeders:"<<ip<<endl;
+
+// 		struct sockaddr_in serv_addr;
+
+// 		memset(&serv_addr,'\0',sizeof(serv_addr));
+		
+// 		serv_addr.sin_family = AF_INET;
+// 		serv_addr.sin_port = htons(portNum);
+// 		serv_addr.sin_addr.s_addr=inet_addr(ip);
+
+// 		if(setsockopt(sockfd, SOL_SOCKET,SO_REUSEADDR|SO_REUSEPORT,&opt,sizeof(opt))){
+// 			cout<<"setsockopt"<<endl;
+// 			exit(EXIT_FAILURE);
+// 		}
+
+// 		//In (struct sockaddr*)&serv_addr, sockaddr_in doesn't work!
+// 		if(connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))<0){
+// 			perror("Connect failed:Client");
+// 			pthread_exit(NULL);
+// 		}
+// 		cout<<"Connect successful:Client "<<endl;
+
+		
+
+// 	}
+// }
 
 int main(){
 
@@ -219,16 +289,21 @@ void *clientThreadFunc(void *ptr){
 		
 		cout<<"Enter command"<<endl;
 		getline(cin, cmd);
-		cout<<"Command entered:Client:"<<cmd<<endl;
+		
 		cmd1=cmd;
 		char *cmdName=strtok((char*)cmd1.c_str()," ");
-		cout<<"Commd name : Client: "<<cmdName<<endl;
+
+		cout<<"Command entered:Client:"<<cmd<<endl;
+		
+		// cout<<"Commd name : Client: "<<cmdName<<endl;
 		// cout<<"Commd name1 : Client: "<<cmd1<<endl;
 		cmdVec.clear();
 		cout<<endl;
 
 		//**********************************************************************************//
-		//Create User
+		// if(cmdName==NULL){
+		// 	pthread_exit(NULL);
+		// }
 		if(strcmp(cmdName, "create_user")==0){
 			cout<<"Inside create_user:Client"<<endl;
 			while((cmdName=strtok(NULL," "))!=NULL){
@@ -256,7 +331,6 @@ void *clientThreadFunc(void *ptr){
 			}
 
 		}
-
 		//**********************************************************************************//
 		else if(strcmp(cmdName, "login")==0){
 			cout<<"Inside login:Client"<<endl;
@@ -293,7 +367,6 @@ void *clientThreadFunc(void *ptr){
 			}
 			
 		}
-
 		//**********************************************************************************//
 		else if(strcmp(cmdName, "create_group")==0){
 			cmdVec.push_back(cmdName);//Need to push_back "create_group" too in the vector so as to make the whole command
@@ -340,7 +413,6 @@ void *clientThreadFunc(void *ptr){
 			}
 			
 		}
-
 		//**********************************************************************************//
 		else if(strcmp(cmdName, "join_group")==0){
 			cmdVec.push_back(cmdName);//Need to push_back "join_group" too in the vector so as to make the whole command
@@ -384,7 +456,6 @@ void *clientThreadFunc(void *ptr){
 			}
 			
 		}
-
 		//**********************************************************************************//
 		else if(strcmp(cmdName, "leave_group")==0){
 			cmdVec.push_back(cmdName);//Need to push_back "leave_group" too in the vector so as to make the whole command
@@ -431,7 +502,6 @@ void *clientThreadFunc(void *ptr){
 			}
 			
 		}
-
 		//**********************************************************************************//
 		else if(strcmp(cmdName, "list_requests")==0){
 			cmdVec.push_back(cmdName);//Need to push_back "list_requests" too in the vector so as to make the whole command
@@ -497,7 +567,6 @@ void *clientThreadFunc(void *ptr){
 			}
 			
 		}
-
 		//**********************************************************************************//
 		else if(strcmp(cmdName, "accept_request")==0){
 			cmdVec.push_back(cmdName);//Need to push_back "accept_request" too in the vector so as to make the whole command
@@ -541,7 +610,6 @@ void *clientThreadFunc(void *ptr){
 			}
 			
 		}
-
 		//**********************************************************************************//
 		else if(strcmp(cmdName, "list_groups")==0){
 			// cmdVec.push_back(cmdName);//Need to push_back "list_groups" too in the vector so as to make the whole command
@@ -743,6 +811,115 @@ void *clientThreadFunc(void *ptr){
 			recv(sockfd, &ack, sizeof(ack),0);
 			cout<<"sync1"<<endl;
 			cout<<"Logged out successfully!"<<endl;
+
+		}
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "download_file")==0){
+			cmdVec.push_back(cmdName);//Need to push_back "upload_file" too in the vector so as to make the whole command
+			cout<<"Inside download_file:Client"<<endl;
+			while((cmdName=strtok(NULL," "))!=NULL){
+				// cmdName=strtok(NULL," ");
+				cmdVec.push_back(cmdName);
+			}
+			if(cmdVec.size()!=4){
+				cout<<"Wrong command format; See: download_file​ <group_id> <file_name> <destination_path>"<<endl;
+				// pthread_exit(NULL);
+				continue;
+			}
+			cout<<"Entered download_file: Client"<<endl;
+			if(USERID==""){
+				cout<<"No Users logged in yet! Need to login before download_file!!"<<endl;
+				continue;
+			}
+			string grpID=cmdVec[1];
+			string fileNm=cmdVec[2];
+			string dest=cmdVec[3];
+
+			string cmdToSend=cmdVec[0]+" "+grpID+" "+fileNm+" "+dest+" "+USERID;
+			cout<<"Sending this cmd to tracker for download_file: "<<cmdToSend<<endl;
+
+			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
+				cout<<"Unable to send cmd(in download_file):Client"<<endl;
+			}
+			//Receive size of org file from tracker
+			int fileSzSource, noOfChunksInFile;
+			recv(sockfd, &fileSzSource, sizeof(fileSzSource),0);
+			cout<<"file size source "<<fileSzSource<<endl;
+
+			send(sockfd,&ack,sizeof(ack),0);//to sync
+
+			createEmptyFile(dest, fileSzSource);
+			cout<<"Returned after creating empty file"<<endl;
+
+			noOfChunksInFile=(int)fileSzSource/CHUNK;
+			if(fileSzSource%CHUNK!=0){
+				noOfChunksInFile++;
+			}
+
+			cout<<"Starting to recieve SHA from tracker"<<endl;
+			int n;
+			char bufSHA[21]={'\0'};
+			string finalSHA="";
+			while(n=recv(sockfd, &bufSHA, sizeof(bufSHA), 0)>0){
+				cout<<"sync4"<<endl;
+				if(strcmp(bufSHA,"endofSHA")==0){
+					break;
+				}
+				cout<<"Recieved SHA: "<<bufSHA<<endl;
+				finalSHA+=bufSHA;
+				send(sockfd, &ack, sizeof(ack), 0);
+				cout<<"sync5"<<endl;
+				memset(bufSHA, '\0', sizeof(bufSHA));
+			}
+			// cout<<"Final SHA recvd:Tracker: "<<finalSHA<<endl;
+			cout<<"Length of Final SHA recvd:Tracker: "<<finalSHA.length()<<endl;
+
+			send(sockfd, &ack, sizeof(ack), 0);//to sync
+
+			//Receiving seederList size
+			int noOfSeeder;
+			vector<pair<string,int> > seederVec;
+			recv(sockfd, &noOfSeeder, sizeof(noOfSeeder), 0);
+			send(sockfd, &ack, sizeof(ack), 0);
+			char pIp[2048];
+			string strr;
+			int port; string ip;
+			memset(pIp,'\0',2048);
+			for(int i=0;i<noOfSeeder;i++){
+				recv(sockfd,&pIp,sizeof(pIp),0);
+				strr=pIp;
+				cout<<"recvd pip: "<<pIp<<endl;
+				if(strr!="Do0Not1Include2"){
+					ip=strtok(pIp," ");
+					// cout<<"strtok edits1:"<<pIp<<endl;
+					string ppp=strtok(NULL," ");
+					// cout<<"strtok edits2:"<<pIp<<endl;
+					// cout<<"ppp: "<<ppp<<endl;
+					port=stoi(ppp);
+					cout<<"ip "<<ip<<" port "<<port<<endl;
+					seederVec.push_back(make_pair(ip,port));
+				}
+				memset(pIp,'\0',2048);
+			}
+
+			//connecting to the respective servers
+			// int seederVecSize=seederVec.size();
+			// vector<vector<int> > seederChunkVec;
+			// cout<<"seederVecSize: "<<seederVecSize<<endl;
+			// connectToSeeders(seederVec, seederVecSize, sockfd);
+			// for(int i=0;i<clientVectSize;i++){
+
+			// }
+
+
+
+
+
+			
+
+			
+
+			
 
 		}
 

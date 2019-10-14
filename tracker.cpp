@@ -129,12 +129,16 @@ void *serveReqAtTracker(void *ptr){
 	int ack;
 	while(1){
 		char cmd[CMD_LEN]={'\0'};
-		int cmdLngth=recv(sockfd, cmd, sizeof(cmd),0);
-		cout<<"Command length:Tracker:"<<cmdLngth<<endl;
-		char rcmd[CMD_LEN];
-		strcpy(rcmd,cmd);
-		cout<<"Command received from client: "<<rcmd<<endl;
-		char *cmdName=strtok(rcmd," ");
+		int cmdLngth=recv(sockfd, cmd, sizeof(cmd),0);		
+		// char rcmd[CMD_LEN];
+		// strcpy(rcmd,cmd);
+		// char *cmdName=strtok(rcmd," ");
+		char *cmdName=strtok(cmd," ");
+		if(cmdName==NULL){
+			pthread_exit(NULL);
+		}
+		// cout<<"Command received from client: "<<cmd<<endl;
+		// cout<<"Command length:Tracker:"<<cmdLngth<<endl;
 		cmdVec.clear();
 		cout<<endl;
 		//**********************************************************************************//
@@ -710,6 +714,83 @@ void *serveReqAtTracker(void *ptr){
 			ack=1;
 			send(sockfd, &ack, sizeof(ack), 0);
 			cout<<"Logged out:Tracker!"<<endl;
+
+
+		}
+
+		//**********************************************************************************//
+		//rcvd cmd-> logdownload_file grpid filenm destn uid
+		else if(strcmp(cmdName, "download_file")==0){
+			cout<<"download_file case:Tracker"<<endl;
+			while((cmdName=strtok(NULL," "))!=NULL){
+				cout<<"cmd recvd:"<<cmdName<<endl;
+				cmdVec.push_back(cmdName);
+			}
+			string grpID=cmdVec[0];
+			string fileNm=cmdVec[1];
+			string dest=cmdVec[2];
+			string userId=cmdVec[3];
+
+			string key=grpID+fileNm;
+
+			//Sending file size to client
+			int fileSz=fileMap[key]->fileSz;
+			cout<<"file size i see:"<<fileSz<<endl;
+			send(sockfd,&fileSz,sizeof(fileSz),0);
+
+			recv(sockfd,&ack,sizeof(ack),0);//to sync
+
+			//Sending sha to client
+			string sHa=fileMap[key]->SHAvar;
+			int lenSHA=sHa.length();
+			cout<<"Length of sha to be sent: "<<lenSHA<<endl;
+			int cnt=0; 
+			cout<<"Going to start sending SHA from Client"<<endl;
+			while(cnt<lenSHA){
+				string sha_20=sHa.substr(cnt,20);
+				cnt+=20;
+				cout<<"SHA sent:Tracker: "<<sha_20<<endl;
+				send(sockfd, (char*)sha_20.c_str(), sha_20.length(), 0);
+				cout<<"sync4"<<endl;
+				recv(sockfd, &ack, sizeof(ack),0);
+				cout<<"sync5"<<endl;
+
+			}
+			char *msg="endofSHA";
+			send(sockfd, msg, sizeof(msg), 0);
+			cout<<"sync4"<<endl;
+
+			recv(sockfd, &ack, sizeof(ack), 0);//to sync
+
+			//Sending concerned IP+Ports to Client
+			vector<string> seederList=fileMap[key]->listOfSeeders;
+			//sending no of seeders to client
+			int seederSize=seederList.size();
+			send(sockfd, &seederSize, sizeof(seederSize), 0);
+			recv(sockfd, &ack, sizeof(ack), 0);
+
+			for(auto &userId : seederList){
+				if(userMap[userId]->loggedIn==1){
+					string pIp=userMap[userId]->ip+" "+to_string(userMap[userId]->portNo);
+					send(sockfd,(char*)pIp.c_str(), pIp.length(),0);
+					cout<<"Ip+Port sent to client: "<<pIp<<endl;
+			
+				}
+				else{
+					string pIp="Do0Not1Include2";
+					send(sockfd,(char*)pIp.c_str(), pIp.length(),0);
+				}
+			}
+
+
+
+
+
+			// cout<<"received user id for logout:"<<userId<<endl;
+			// userMap[userId]->loggedIn=0;
+			// ack=1;
+			// send(sockfd, &ack, sizeof(ack), 0);
+			// cout<<"Logged out:Tracker!"<<endl;
 
 
 		}
