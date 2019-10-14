@@ -774,11 +774,13 @@ void *serveReqAtTracker(void *ptr){
 					string pIp=userMap[userId]->ip+" "+to_string(userMap[userId]->portNo);
 					send(sockfd,(char*)pIp.c_str(), pIp.length(),0);
 					cout<<"Ip+Port sent to client: "<<pIp<<endl;
+					recv(sockfd, &ack, sizeof(ack), 0);//to sync
 			
 				}
 				else{
 					string pIp="Do0Not1Include2";
 					send(sockfd,(char*)pIp.c_str(), pIp.length(),0);
+					recv(sockfd, &ack, sizeof(ack), 0);//to sync
 				}
 			}
 
