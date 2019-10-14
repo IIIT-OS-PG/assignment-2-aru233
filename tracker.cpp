@@ -15,8 +15,10 @@
 using namespace std;
 
 #define CMD_LEN 20480 //20kb
-#define NOT_LOGGED_IN -2
+#define LOGGED_IN 3
 #define IN_LIST 2
+#define IN_GROUP 4
+#define NOT_LOGGED_IN -2
 #define NOT_IN_GROUP -3
 #define IS_OWNER -4
 #define NOT_PENDING_JOIN -5
@@ -48,9 +50,9 @@ struct threadData{
 };
 typedef struct threadData struct_threadData;
 
-struct filedetails{
-	string sha;
+struct filedetails{	
 	int fileSz;
+	string SHAvar;
 	vector<string> listOfSeeders;//list of userIDs of users who're participating in the upload process
 };
 typedef struct filedetails fileDetail;
@@ -64,7 +66,7 @@ struct userdetails{
 typedef struct userdetails userDetail;
 
 struct groupdetails{
-	vector<string> fileNm;
+	vector<pair<string,int> > fileNm;//pair is of filename,shareable; shareable=1
 	vector<string> listOfSeeders;
 	string grpOwner;
 	vector<string> listOfPendingReq;//list of userIDs of users with pending group join requests
@@ -82,7 +84,7 @@ int userLoggedIn(string userId){
 		return 0;
 	}
 	for(auto i : userMap){
-		if(i.first==userId){
+		if(i.first==userId && (i.second)->loggedIn==1){
 			return 1;
 		}
 	}
@@ -94,6 +96,23 @@ int inList(vector<string>& mlist, string uid){
 		if(mlist[i]==uid){
 			return i;
 		}
+	}
+	return -1;
+}
+
+//for fileNm list of groupDetail struct, where each elem is a pair<string,int>
+// int inFileList(vector<string>& filelist, string filenm){
+// 	for(int i=0;i<filelist.size();i++){
+// 		if(filelist[i].first==filenm){
+// 			return i;
+// 		}
+// 	}
+// 	return -1;
+// }
+
+int userInGroup(string userid, string gid){
+	if(inList((groupMap[gid]->listOfSeeders),userid)!=-1){
+		return 1;
 	}
 	return -1;
 }
@@ -140,7 +159,8 @@ void *serveReqAtTracker(void *ptr){
 				cout<<"tracker sent -ve ack to client"<<endl;
 				continue;
 			}
-			userDetail* userDet=(userDetail*)malloc(sizeof(userDetail));
+			// userDetail* userDet=(userDetail*)malloc(sizeof(userDetail));
+			userDetail* userDet=new userDetail;
 			userDet->password=passw;
 			userDet->loggedIn=0;
 			userDet->portNo=ntohs((thrdData->client_addr).sin_port);
@@ -237,7 +257,8 @@ void *serveReqAtTracker(void *ptr){
 			if(flag==1){
 				continue;
 			}
-			groupDetail *gpDet=(groupDetail*)malloc(sizeof(groupDetail));
+			// groupDetail* gpDet=(groupDetail*)malloc(sizeof(groupDetail));
+			groupDetail* gpDet=new groupDetail;
 			gpDet->grpOwner=userId;
 			gpDet->listOfSeeders.push_back(userId);
 			groupMap[grpId]=gpDet;//inserting new groupId as key and an empty struct as value
@@ -525,12 +546,22 @@ void *serveReqAtTracker(void *ptr){
 
 					cout<<"Sending the fileNames to client"<<endl;
 					for(int i=0;i<sze;i++){
-						string listele=(groupMap[grpId]->fileNm)[i];
-						cout<<listele<<" ";
-						send(sockfd, (char*)listele.c_str(), listele.length(), 0);
-						// cout<<"Send2"<<endl;
-						recv(sockfd, &ack, sizeof(ack),0);
-						// cout<<"Rcvd ack2"<<endl;
+						pair<string, int> listelm;
+						listelm=(groupMap[grpId]->fileNm)[i];
+						if(listelm.second==1){//file is shareable
+							string listele=listelm.first;
+							cout<<listele<<" ";
+							send(sockfd, (char*)listele.c_str(), listele.length(), 0);
+							// cout<<"Send2"<<endl;
+							recv(sockfd, &ack, sizeof(ack),0);
+							// cout<<"Rcvd ack2"<<endl;
+						}
+						else{
+							string listele="Do0Not1Include2";
+							send(sockfd, (char*)listele.c_str(), listele.length(), 0);
+							// cout<<"Send2"<<endl;
+							recv(sockfd, &ack, sizeof(ack),0);
+						}						
 					}
 					cout<<endl;
 					cout<<"Sent the list to client"<<endl;
@@ -570,32 +601,116 @@ void *serveReqAtTracker(void *ptr){
 				// cmdName=strtok(NULL," ");
 				cmdVec.push_back(cmdName);
 			}
+
 			string fileNm=cmdVec[0];
 			string str_fileSz=cmdVec[1];
 			string grpID=cmdVec[2];
+			string userId=cmdVec[3];
+			int filesz=stoi(str_fileSz);
 
-			cout<<"Recieved fileNm, fileSz, grpID: "<<
-			fileNm<<" "<< str_fileSz<<" " <<grpID<<endl;
+			cout<<"Recieved fileNm, fileSz, grpID, userId: "<<
+			fileNm<<" "<< str_fileSz<<"(string) "<<filesz<<"(int)"<<" " <<grpID<<" "<<userId<<endl;
 
 			send(sockfd, &ack, sizeof(ack), 0);
-			cout<<"tracker sent ack to client"<<endl;
+			cout<<"sync1"<<endl;
+
+			recv(sockfd, &ack, sizeof(ack), 0);
+			cout<<"sync2"<<endl;
+
+			if(!userInGroup(userId, grpID)){
+				ack=NOT_IN_GROUP;
+				send(sockfd, &ack, sizeof(ack), 0);
+				cout<<"sync3"<<endl;
+				cout<<"user not in group"<<endl;
+				continue;
+			}
+			else{
+				ack=IN_GROUP;
+				send(sockfd, &ack, sizeof(ack), 0);
+				cout<<"sync3"<<endl;
+				cout<<"user in group"<<endl;
+			}
 
 			cout<<"Starting to recieve SHA"<<endl;
 			int n;
 			char bufSHA[21]={'\0'};
 			string finalSHA="";
-			while(n=recv(sockfd, bufSHA, sizeof(bufSHA), 0)>0){
+			ack=666;
+			while(n=recv(sockfd, &bufSHA, sizeof(bufSHA), 0)>0){
+				cout<<"sync4"<<endl;
 				if(strcmp(bufSHA,"endofSHA")==0){
 					break;
 				}
 				cout<<"Recieved SHA: "<<bufSHA<<endl;
 				finalSHA+=bufSHA;
-				ack=1;
+				ack=98765;
+				// cout<<"UMM"<<endl;
 				send(sockfd, &ack, sizeof(ack), 0);
+				cout<<"sync5"<<endl;
 				memset(bufSHA, '\0', sizeof(bufSHA));
 			}
 			cout<<"Final SHA recvd:Tracker: "<<finalSHA<<endl;
 			cout<<"Length of Final SHA recvd:Tracker: "<<finalSHA.length()<<endl;
+			ack=777;
+			//Updating  fileMap
+			string key=grpID+fileNm;
+			if(fileMap.find(key)!=fileMap.end()){//key laready exists
+				(fileMap[key]->listOfSeeders).push_back(userId);
+			}
+			else{
+				// struct filedetails *fdet=(struct filedetails*)malloc(sizeof(struct filedetails));
+				fileDetail *fdet=new fileDetail;
+				cout<<"ping"<<endl;
+				fdet->fileSz=filesz;
+				cout<<"pingfilesz"<<endl;
+
+				fdet->SHAvar=finalSHA;
+				cout<<"pingsha"<<endl;
+
+				(fdet->listOfSeeders).push_back(userId);
+				cout<<"pinglistofseeders"<<endl;
+				fileMap[key]=fdet;
+				cout<<"pingmap"<<endl;
+				cout<<"size "<<fileMap[key]->fileSz<<endl;
+				cout<<"sha "<<fileMap[key]->SHAvar<<endl;
+			}	
+			ack=888;		
+
+			//Adding file to groupMap's listOfFileName, if not already present
+			int filePresent=0;
+			vector<pair<string,int> > vect=groupMap[grpID]->fileNm;
+			for(int i=0;i<vect.size();i++){
+				if(vect[i].first==fileNm){
+					vect[i].second=1;//making file shareable again
+					filePresent=1;//a flag
+					break;
+				}
+			}
+			if(filePresent==0){
+				(groupMap[grpID]->fileNm).push_back(make_pair(fileNm,1));
+			}
+			cout<<"ping3"<<endl;
+			ack=999;
+			send(sockfd, &ack, sizeof(ack), 0);//work done
+			cout<<"sync6"<<endl;
+			cout<<"Exiting upload_file"<<endl;
+		}
+
+		//**********************************************************************************//
+		//rcvd cmd-> logout uid
+		else if(strcmp(cmdName, "logout")==0){
+			cout<<"logout case:Tracker"<<endl;
+			while((cmdName=strtok(NULL," "))!=NULL){
+				// cmdName=strtok(NULL," ");
+				cmdVec.push_back(cmdName);
+			}
+			string userId=cmdVec[0];
+			cout<<"received user id for logout:"<<userId<<endl;
+			userMap[userId]->loggedIn=0;
+			ack=1;
+			send(sockfd, &ack, sizeof(ack), 0);
+			cout<<"Logged out:Tracker!"<<endl;
+
 
 		}
 	}//End of infinite while
@@ -657,7 +772,16 @@ void *trackerThreadFunc(void *ptr){
 		else{
 			cout<<"Accept successful : Tracker1 "<<endl;
 			// pthread_t servetrackerReqthread;
-			struct_threadData *cdata=(struct_threadData *)malloc(sizeof(struct_threadData));
+			// struct_threadData *cdata=(struct_threadData *)malloc(sizeof(struct_threadData));
+
+			/* 
+			TIPS: malloc vs new: 
+			malloc only allocates memory, it has no idea what a class is or how to instantiate one. 
+			You should generally not use it in C++.(malloc is a C thing)
+			"new" allocates memory and constructs an instance of the class..it calls the default constructor.
+			Was getting an error while assigning value to a string inside the struct "fileDetail"
+			*/
+			struct_threadData *cdata=new struct_threadData;
 			cdata->sockfd=new_server_socket_fd;
 			cdata->client_addr=new_serv_addr;
 			//TODO : Is this correct?

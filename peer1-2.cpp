@@ -25,8 +25,10 @@ using namespace std;
 #define PORT1 2002
 #define SERVER_THREADS 4
 #define CLIENT_THREADS 3
-#define NOT_LOGGED_IN -2
+#define IN_GROUP 4
 #define IN_LIST 2
+#define LOGGED_IN 3
+#define NOT_LOGGED_IN -2
 #define NOT_IN_GROUP -3
 #define IS_OWNER -4
 #define NOT_PENDING_JOIN -5
@@ -618,6 +620,7 @@ void *clientThreadFunc(void *ptr){
 			// cout<<"Send ack1"<<endl;
 
 			char listele[2048];
+			string strr;
 			cout<<"The shareable files in group "<<grpID<<" are:"<<endl;
 			for(int i=0;i<szeOfList;i++){
 				// if(i==0) cout<<"..rcving list elems..."<<endl;
@@ -625,7 +628,11 @@ void *clientThreadFunc(void *ptr){
 				// cout<<"Rcvd2"<<endl;
 				send(sockfd, &ack, sizeof(ack), 0);
 				// cout<<"Send2"<<endl;
-				cout<<listele<<" ";
+				strr=listele;
+				if(strr!="Do0Not1Include2"){
+					cout<<strr<<" ";
+				}
+				
 			}
 			cout<<endl;
 
@@ -655,6 +662,10 @@ void *clientThreadFunc(void *ptr){
 				continue;
 			}
 			cout<<"Entered upload_file: Client"<<endl;
+			if(USERID==""){
+				cout<<"No Users logged in yet! Need to login before upload_files!!"<<endl;
+				continue;
+			}
 			string fileName=cmdVec[1];
 			string grpID=cmdVec[2];
 			FILE *fp=fopen((char*)fileName.c_str(), "rb");
@@ -667,37 +678,76 @@ void *clientThreadFunc(void *ptr){
 			string fileSHA=sha256_of_chunks(fp, file_size);
 			cout<<"SHA as calculated:Client:"<<fileSHA<<endl;
 			cout<<"Calculated SHA length:Client:"<<fileSHA.length()<<endl;
-
-			// struct_userDet *udata=(struct_userDet *)malloc(sizeof(struct_userDet));
-			// udata->fileNm=fileName;
-			// udata->sha=fileSHA;
-			// udata->fileSz=file_size;
-			// udata->gid=grpID;
-			string cmdToSend=cmdVec[0]+" "+fileName+" "+str_file_size+" "+grpID;
+			if(USERID==""){
+				cout<<"No Users logged in yet! Need to login before upload_files!!"<<endl;
+				continue;
+			}
+			string cmdToSend=cmdVec[0]+" "+fileName+" "+str_file_size+" "+grpID+" "+USERID;
 			//Not sending SHA here
 			cout<<"Sending this cmd to tracker for upload_file: "<<cmdToSend<<endl;
 
 
-			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
+			if(send(sockfd,(char*)cmdToSend.c_str(),cmdToSend.length(),0)<0){
 				cout<<"Unable to send cmd(in upload_file):Client"<<endl;
 			}
 			//Receive acknowledgement
 			recv(sockfd, &ack, sizeof(ack),0);
-			cout<<"Ack received in upload_file: Client: "<<ack<<endl;
+			cout<<"sync1"<<endl;
+			cout<<"Ack received for sending cmd in upload_file: Client: "<<ack<<endl;
 
-			int lenSHA=fileSHA.length();
-			int cnt=0;
-			cout<<"GOing to start sending SHA from Client"<<endl;
-			while(cnt<lenSHA){
-				string sha_20=fileSHA.substr(cnt,20);
-				cnt+=20;
-				cout<<"SHA sent:Client: "<<sha_20<<endl;
-				send(sockfd, (char*)sha_20.c_str(), sha_20.length(), 0);
-				recv(sockfd, &ack, sizeof(ack),0);
-
+			send(sockfd, &ack, sizeof(ack),0);//to sync
+			cout<<"sync2"<<endl;
+			recv(sockfd, &ack, sizeof(ack),0);//check if user in group or not
+			cout<<"sync3"<<endl;
+			if(ack==NOT_IN_GROUP){
+				cout<<"Sorry isnt in the group! Join the group to upload_file!!"<<endl;
+				continue;
 			}
-			char *msg="endofSHA";
-			send(sockfd, msg, sizeof(msg), 0);
+			else if(ack==IN_GROUP){
+				int lenSHA=fileSHA.length();
+				int cnt=0;
+				cout<<"Going to start sending SHA from Client"<<endl;
+				while(cnt<lenSHA){
+					string sha_20=fileSHA.substr(cnt,20);
+					cnt+=20;
+					cout<<"SHA sent:Client: "<<sha_20<<endl;
+					send(sockfd, (char*)sha_20.c_str(), sha_20.length(), 0);
+					cout<<"sync4"<<endl;
+					recv(sockfd, &ack, sizeof(ack),0);
+					cout<<"sync5"<<endl;
+
+				}
+				char *msg="endofSHA";
+				send(sockfd, msg, sizeof(msg), 0);
+				cout<<"sync4"<<endl;
+
+				int nu=recv(sockfd, &ack, sizeof(ack),0);//work done
+				cout<<"sync6; ack: "<<ack<<endl;
+				cout<<"upload_file last rec bytes: "<<nu<<endl;
+			}
+
+		}
+		//**********************************************************************************//
+		else if(strcmp(cmdName, "logout")==0){
+			if(USERID==""){
+				cout<<"No user Logged in! Can't logout!!"<<endl;
+				continue;
+			}			
+			string cmdToSend=cmdName;
+			cmdToSend+=" "+USERID;
+			USERID="";
+			if(send(sockfd,(char*)cmdToSend.c_str(),cmdToSend.length(),0)<0){
+				cout<<"Unable to send cmd(in logout):Client"<<endl;
+			}
+			//Receive acknowledgement
+			recv(sockfd, &ack, sizeof(ack),0);
+			cout<<"sync1"<<endl;
+			cout<<"Logged out successfully!"<<endl;
+
+		}
+
+		else{//No command matches
+			cout<<"ERR! Check the command you've entered"<<endl;
 		}
 
 	}
