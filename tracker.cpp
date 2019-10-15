@@ -21,6 +21,7 @@ using namespace std;
 #define NOT_LOGGED_IN -2
 #define NOT_IN_GROUP -3
 #define IS_OWNER -4
+#define NOT_OWNER -44
 #define NOT_PENDING_JOIN -5
 #define NO_GROUPS -6
 #define NO_USER -7
@@ -100,17 +101,14 @@ int inList(vector<string>& mlist, string uid){
 	return -1;
 }
 
-//for fileNm list of groupDetail struct, where each elem is a pair<string,int>
-// int inFileList(vector<string>& filelist, string filenm){
-// 	for(int i=0;i<filelist.size();i++){
-// 		if(filelist[i].first==filenm){
-// 			return i;
-// 		}
-// 	}
-// 	return -1;
-// }
-
-int userInGroup(string userid, string gid){
+int userInGroup(string userid, string gid){	
+	cout<<"brdxczdfvgbnmjhngfvdsafvgbnmbvcxdfvgbn"<<endl;
+	cout<<"Curr user: "<<userid<<" current gid: "<<gid<<endl;
+	cout<<"in inList; Displaying list of seeders"<<endl;
+	for(int i=0;i<(groupMap[gid]->listOfSeeders).size();i++){
+		cout<<(groupMap[gid]->listOfSeeders)[i]<<" ";
+	}
+	cout<<endl;
 	if(inList((groupMap[gid]->listOfSeeders),userid)!=-1){
 		return 1;
 	}
@@ -394,33 +392,54 @@ void *serveReqAtTracker(void *ptr){
 			}
 			int pos;
 			for(auto i : groupMap){
-				if(i.first==grpId){//group exists					
-					int sze=(groupMap[grpId]->listOfPendingReq).size();
-					cout<<"Sending the size of listOfPendingReq to client; size:"<<sze<<endl;
-					send(sockfd, &sze, sizeof(sze), 0);
-					cout<<"Send1"<<endl;
+				if(i.first==grpId){//group exists
+					if(groupMap[grpId]->grpOwner == userId){//only owner can view the pending requests
+						int sze=(groupMap[grpId]->listOfPendingReq).size();
+						cout<<"Sending the size of listOfPendingReq to client; size:"<<sze<<endl;
+						send(sockfd, &sze, sizeof(sze), 0);
+						cout<<"Send1"<<endl;
 
-					//Receiving ack for listSize reception from client
-					recv(sockfd, &ack, sizeof(ack),0);
-					cout<<"Rcvd ack1"<<endl;
-
-					cout<<"Sending the list of pending req to client"<<endl;
-					for(int i=0;i<sze;i++){
-						string listele=(groupMap[grpId]->listOfPendingReq)[i];
-						cout<<listele<<" ";
-						send(sockfd, (char*)listele.c_str(), listele.length(), 0);
-						// cout<<"Send2"<<endl;
+						//Receiving ack for listSize reception from client
 						recv(sockfd, &ack, sizeof(ack),0);
-						// cout<<"Rcvd ack2"<<endl;
+						cout<<"Rcvd ack1"<<endl;
+
+						cout<<"Sending the list of pending req to client"<<endl;
+						for(int i=0;i<sze;i++){
+							string listele=(groupMap[grpId]->listOfPendingReq)[i];
+							cout<<listele<<" ";
+							send(sockfd, (char*)listele.c_str(), listele.length(), 0);
+							// cout<<"Send2"<<endl;
+							recv(sockfd, &ack, sizeof(ack),0);
+							// cout<<"Rcvd ack2"<<endl;
+						}
+						cout<<endl;
+						cout<<"Sent the list to client"<<endl;
+						ack=1;
+						send(sockfd, &ack, sizeof(ack), 0);
+						// cout<<"Send3"<<endl;
+						cout<<"tracker sent ack to client; ack:"<<ack<<endl;
+						flag=1;
+						break;
 					}
-					cout<<endl;
-					cout<<"Sent the list to client"<<endl;
-					ack=1;
-					send(sockfd, &ack, sizeof(ack), 0);
-					// cout<<"Send3"<<endl;
-					cout<<"tracker sent ack to client; ack:"<<ack<<endl;
-					flag=1;
-					break;				
+					else{
+						int sze=0;
+						send(sockfd, &sze, sizeof(sze), 0);
+						cout<<"Sending the size of listOfPendingReq to client; size:"<<sze<<endl;
+						
+						// cout<<"Send1"<<endl;
+
+						//Receiving ack for listSize reception from client
+						recv(sockfd, &ack, sizeof(ack),0);
+
+						cout<<"Err:User not the owner!!"<<endl;//Group with given groupId doesn't exist
+						ack=NOT_OWNER;
+						send(sockfd, &ack, sizeof(ack), 0);
+						cout<<"tracker sent ack to client"<<endl;
+						flag=1;
+						break;
+
+					}			
+									
 				}
 			}
 			if(flag==1){
@@ -493,7 +512,7 @@ void *serveReqAtTracker(void *ptr){
 		}
 
 		//**********************************************************************************//
-		//rcvd cmd-> list_groups gid uid
+		//rcvd cmd-> list_groups
 		else if(strcmp(cmdName, "list_groups")==0){
 			// int flag=0;
 			cout<<"list_groups case:Tracker"<<endl;
@@ -541,7 +560,7 @@ void *serveReqAtTracker(void *ptr){
 			for(auto i : groupMap){
 				if(i.first==grpId){//group exists
 					//check if user part of the group
-					// if(inList((groupMap[i]->ListOfSeeders),userId)!=-1){//user is in group
+					if(inList(((i.second)->listOfSeeders),userId)!=-1){//user is in group
 						int sze=(groupMap[grpId]->fileNm).size();
 						cout<<"Sending the size of list of fileNames to client; size:"<<sze<<endl;
 						send(sockfd, &sze, sizeof(sze), 0);
@@ -578,10 +597,24 @@ void *serveReqAtTracker(void *ptr){
 						cout<<"tracker sent ack to client; ack:"<<ack<<endl;
 						flag=1;
 						break;			
-					// }
-					// else{//group exists but user not in group
+					}
+					else{//group exists but user not in group
+						int sze=0;
+						send(sockfd, &sze, sizeof(sze), 0);
+						cout<<"Sending the size of listOf fileNames to client; size:"<<sze<<endl;
 						
-					// }
+						// cout<<"Send1"<<endl;
+
+						//Receiving ack for listSize reception from client
+						recv(sockfd, &ack, sizeof(ack),0);
+
+						cout<<"Err:Not in group!!"<<endl;//Group with given groupId doesn't exist
+						ack=NOT_IN_GROUP;
+						send(sockfd, &ack, sizeof(ack), 0);
+						cout<<"tracker sent ack to client"<<endl;
+						flag=1;
+						break;
+					}
 						
 				}
 					
@@ -633,14 +666,14 @@ void *serveReqAtTracker(void *ptr){
 			if(!userInGroup(userId, grpID)){
 				ack=NOT_IN_GROUP;
 				send(sockfd, &ack, sizeof(ack), 0);
-				cout<<"sync3"<<endl;
+				// cout<<"sync3"<<endl;
 				cout<<"user not in group"<<endl;
 				continue;
 			}
 			else{
 				ack=IN_GROUP;
 				send(sockfd, &ack, sizeof(ack), 0);
-				cout<<"sync3"<<endl;
+				// cout<<"sync3"<<endl;
 				cout<<"user in group"<<endl;
 			}
 
@@ -650,21 +683,21 @@ void *serveReqAtTracker(void *ptr){
 			string finalSHA="";
 			ack=666;
 			while(n=recv(sockfd, &bufSHA, sizeof(bufSHA), 0)>0){
-				cout<<"sync4"<<endl;
+				// cout<<"sync4"<<endl;
 				if(strcmp(bufSHA,"endofSHA")==0){
 					break;
 				}
-				cout<<"Recieved SHA: "<<bufSHA<<endl;
+				// cout<<"Recieved SHA: "<<bufSHA<<endl;
 				finalSHA+=bufSHA;
-				ack=98765;
+				// ack=98765;
 				// cout<<"UMM"<<endl;
 				send(sockfd, &ack, sizeof(ack), 0);
-				cout<<"sync5"<<endl;
+				// cout<<"sync5"<<endl;
 				memset(bufSHA, '\0', sizeof(bufSHA));
 			}
 			cout<<"Final SHA recvd:Tracker: "<<finalSHA<<endl;
 			cout<<"Length of Final SHA recvd:Tracker: "<<finalSHA.length()<<endl;
-			ack=777;
+			// ack=777;
 			//Updating  fileMap
 			string key=grpID+fileNm;
 			if(fileMap.find(key)!=fileMap.end()){//key laready exists
@@ -673,21 +706,21 @@ void *serveReqAtTracker(void *ptr){
 			else{
 				// struct filedetails *fdet=(struct filedetails*)malloc(sizeof(struct filedetails));
 				fileDetail *fdet=new fileDetail;
-				cout<<"ping"<<endl;
+				// cout<<"ping"<<endl;
 				fdet->fileSz=filesz;
-				cout<<"pingfilesz"<<endl;
+				// cout<<"pingfilesz"<<endl;
 
 				fdet->SHAvar=finalSHA;
-				cout<<"pingsha"<<endl;
+				// cout<<"pingsha"<<endl;
 
 				(fdet->listOfSeeders).push_back(userId);
-				cout<<"pinglistofseeders"<<endl;
+				// cout<<"pinglistofseeders"<<endl;
 				fileMap[key]=fdet;
-				cout<<"pingmap"<<endl;
-				cout<<"size "<<fileMap[key]->fileSz<<endl;
-				cout<<"sha "<<fileMap[key]->SHAvar<<endl;
+				// cout<<"pingmap"<<endl;
+				// cout<<"size "<<fileMap[key]->fileSz<<endl;
+				// cout<<"sha "<<fileMap[key]->SHAvar<<endl;
 			}	
-			ack=888;		
+			// ack=888;		
 
 			//Adding file to groupMap's listOfFileName, if not already present
 			int filePresent=0;
@@ -703,7 +736,7 @@ void *serveReqAtTracker(void *ptr){
 				(groupMap[grpID]->fileNm).push_back(make_pair(fileNm,1));
 			}
 			cout<<"ping3"<<endl;
-			ack=999;
+			// ack=999;
 			send(sockfd, &ack, sizeof(ack), 0);//work done
 			cout<<"sync6"<<endl;
 			cout<<"Exiting upload_file"<<endl;
@@ -739,6 +772,20 @@ void *serveReqAtTracker(void *ptr){
 			string fileNm=cmdVec[1];
 			string dest=cmdVec[2];
 			string userId=cmdVec[3];
+
+			if(!userInGroup(userId, grpID)){
+				ack=NOT_IN_GROUP;
+				send(sockfd, &ack, sizeof(ack), 0);
+				// cout<<"sync3"<<endl;
+				cout<<"user not in group"<<endl;
+				continue;
+			}
+			else{
+				ack=IN_GROUP;
+				send(sockfd, &ack, sizeof(ack), 0);
+				// cout<<"sync3"<<endl;
+				cout<<"user in group"<<endl;
+			}
 
 			string key=grpID+fileNm;
 
@@ -792,17 +839,6 @@ void *serveReqAtTracker(void *ptr){
 					recv(sockfd, &ack, sizeof(ack), 0);//to sync
 				}
 			}
-
-			
-
-
-
-			// cout<<"received user id for logout:"<<userId<<endl;
-			// userMap[userId]->loggedIn=0;
-			// ack=1;
-			// send(sockfd, &ack, sizeof(ack), 0);
-			// cout<<"Logged out:Tracker!"<<endl;
-
 
 		}
 	}//End of infinite while

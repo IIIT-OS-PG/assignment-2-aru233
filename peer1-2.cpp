@@ -30,6 +30,7 @@ using namespace std;
 #define NOT_LOGGED_IN -2
 #define NOT_IN_GROUP -3
 #define IS_OWNER -4
+#define NOT_OWNER -44
 #define NOT_PENDING_JOIN -5
 #define NO_GROUPS -6
 #define NO_USER -7
@@ -37,6 +38,7 @@ using namespace std;
 #define REQ_FOR_DATA "Request for Data"
 
 pthread_mutex_t mlock;
+int canStartUpload=0;
 
 
 void *serverThreadFunc(void *ptr);
@@ -365,18 +367,6 @@ void *chunkDownloadFunc(void *ptr){
 		}
 		cout<<"Sent chunkNo. to server:"<<chunk_no<<endl;
 
-		// file_size=client_data_download->fileSize;
-
-		// int my_buff_size;
-		// if(file_size<BUFF_SIZE){
-		// 	my_buff_size=file_size;
-		// }
-		// else{
-		// 	my_buff_size=BUFF_SIZE;
-		// }
-		// cout<<"my_buff_size : fileDownloadFunc : "<<my_buff_size<<endl;
-		// char buffer[my_buff_size]={'\0'};
-
 		int my_buff_size=BUFF_SIZE;
 		char buffer[BUFF_SIZE]={'\0'};
 
@@ -413,8 +403,14 @@ void *chunkDownloadFunc(void *ptr){
 		// fseek(fp, 0, SEEK_SET);
 		// send(sockfd,&ack,ack,0);
 		// cout<<"sync!!"<<endl;
+
+		seederFileChunkMap[sha].push_back(chunk_no);
+		if(seederFileChunkMap.find(sha)==seederFileChunkMap.end()){
+			canStartUpload=1;
+		}
 	}
 	fclose(fp);
+	close(sockfd);
 	cout<<"Out of for(); Done with all chunks"<<endl;
 	
 	// pthread_mutex_unlock(&mlock);
@@ -822,6 +818,9 @@ void *clientThreadFunc(void *ptr){
 			else if(ack==NOT_LOGGED_IN){
 				cout<<"User not logged in properly!!"<<endl;
 			}
+			else if(ack==NOT_OWNER){
+				cout<<"User not the OWNER! only owner can list requests!!"<<endl;
+			}
 			else{
 				cout<<"Successfully listed pending requests!:Client:"<<ack<<endl;
 			}
@@ -970,6 +969,9 @@ void *clientThreadFunc(void *ptr){
 			if(ack==-1){
 				cout<<"The group doesn't exist!:Client:"<<ack<<endl;
 			}
+			else if(ack==NOT_IN_GROUP){
+				cout<<"The user is not a part of the group! Can't list files!!"<<ack<<endl;
+			}
 			else{
 				cout<<"Successfully listed the shareable files!:Client:"<<ack<<endl;	
 			}			
@@ -1114,6 +1116,13 @@ void *clientThreadFunc(void *ptr){
 			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
 				cout<<"Unable to send cmd(in download_file):Client"<<endl;
 			}
+
+			recv(sockfd,&ack,sizeof(ack),0);//user in group or not
+			if(ack==NOT_IN_GROUP){
+				cout<<"User not in group! Can't download file!!"<<endl;
+				continue;
+			}
+
 			//Receive size of org file from tracker
 			int fileSzSource, noOfChunksInFile;
 			recv(sockfd, &fileSzSource, sizeof(fileSzSource),0);
@@ -1226,6 +1235,8 @@ void *clientThreadFunc(void *ptr){
 			cout<<"Have returned from connectToSeedersForData()"<<endl;
 
 			///////////////////////////////////////////////
+
+
 
 		}
 
@@ -1411,21 +1422,6 @@ void *serverThreadFunc(void *ptr){
 	
 
 	cout<<"Accept successful : Server "<<endl;
-
-	/* 
-	Msg passing code:
-	char msg[BUFF_SIZE]="10111Servvvvvvvvvver says hi, client";
-	// int msg=10;
-	// size_t msg_len=strlen(msg);
-	if(send(new_server_socket_fd, msg, sizeof(msg), 0)<0){
-		perror("error in send : Server");
-		pthread_exit(NULL);
-	}
-	cout<<"Msg size sent by Server "<<strlen(msg)<<endl;
-	cout<<"Msg sent by Server "<<msg<<endl;
-	*/
-
-
 	close(server_socket_fd);
 	// close(new_server_socket_fd);
 }
