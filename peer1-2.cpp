@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -23,7 +22,7 @@ using namespace std;
 #define CHUNK 512
 #define PORT2 2001
 #define PORT1 2002
-#define SERVER_THREADS 4
+#define SERVER_THREADS 100
 #define CLIENT_THREADS 3
 #define IN_GROUP 4
 #define IN_LIST 2
@@ -59,6 +58,16 @@ struct threadData{
 	int fileSize;
 };
 typedef struct threadData struct_tData;
+
+struct threadDownlData{
+	string ip;
+	int portNo;
+	FILE *fp;	
+	string filenm;
+	vector<int> chunksToDownload;
+	string sha;
+};
+typedef struct threadDownlData struct_tDownlData;
 
 struct userDetail{
 	int sockfd;
@@ -232,9 +241,229 @@ void connectToSeedersForVec(vector<pair<string,int> >& seederVec, vector<vector<
 			send(sockfd,&ack, sizeof(ack),0);//to sync
 			cout<<"sync2"<<endl;
 		}
+		close(sockfd);
 
 	}
 }
+
+void pieceSelection(vector<vector<int> >& seederChunkVec, vector<vector<int> >& pieceSelectVec, int noOfChunksInFile){
+	cout<<"Entered pieceSelection()"<<endl;
+	vector<int> vis(noOfChunksInFile+1, 0);//chunkNos are 1-indexed
+	int chunkCount=1;
+	cout<<"noOfChunksInFile: "<<noOfChunksInFile<<endl;
+	while(chunkCount<=noOfChunksInFile){
+		for(int i=0;i<seederChunkVec.size();i++){
+			// vector<int> chunkRow=seederChunkVec[i];
+			cout<<"ChunkRowSize for a client:"<<seederChunkVec[i].size()<<endl;
+			cout<<"Curr chunk: "<<seederChunkVec[i][0]<<endl;
+			if(seederChunkVec[i].size()>0 && vis[seederChunkVec[i][0] ]==0){
+				pieceSelectVec[i].push_back(seederChunkVec[i][0]);
+				vis[seederChunkVec[i][0]]=1;
+				seederChunkVec[i].erase(seederChunkVec[i].begin());
+				// cout<<"New row length:"<<
+				chunkCount++;
+				cout<<"chunkCount:"<<chunkCount<<endl;
+				
+			}
+			else if(seederChunkVec[i].size()>0 && vis[seederChunkVec[i][0] ]==1){
+				while(seederChunkVec[i].size()>0 && vis[seederChunkVec[i][0] ]==1){
+					seederChunkVec[i].erase(seederChunkVec[i].begin());			
+				}
+				if(seederChunkVec[i].size()>0 && vis[seederChunkVec[i][0] ]==0){
+					pieceSelectVec[i].push_back(seederChunkVec[i][0]);
+					vis[seederChunkVec[i][0]]=1;
+					seederChunkVec[i].erase(seederChunkVec[i].begin());
+					// cout<<"New row length:"<<
+					chunkCount++;
+					cout<<"chunkCount:"<<chunkCount<<endl;
+				}
+			}
+			if(chunkCount>noOfChunksInFile){
+				break;
+			}
+
+		}
+	}
+	
+	cout<<"Exiting pieceSelection()"<<endl;
+}
+
+void *chunkDownloadFunc(void *ptr){	
+	cout<<"in chunkDownloadFunc "<<endl;
+
+	struct_tDownlData *client_data_download=(struct_tDownlData*)ptr;
+	FILE* fp=client_data_download->fp;
+	string sourcefilenm=client_data_download->filenm;
+	int portNum=client_data_download->portNo;
+	string ip=client_data_download->ip;
+	vector<int> chunksToTake = client_data_download->chunksToDownload;
+	string sha=client_data_download->sha;
+
+	int sockfd=socket(AF_INET, SOCK_STREAM, 0), opt=1, ack=1;
+	if(sockfd<0){
+		perror("Socket creation failed :chunkDownloadFunc");
+		pthread_exit(NULL);
+	}
+	cout<<"Socket created:chunkDownloadFunc"<<endl;
+
+	struct sockaddr_in serv_addr;
+	serv_addr.sin_family = AF_INET;
+	serv_addr.sin_port = htons( portNum );
+	serv_addr.sin_addr.s_addr=inet_addr(ip.c_str());
+
+	if(setsockopt(sockfd, SOL_SOCKET,SO_REUSEADDR|SO_REUSEPORT,&opt,sizeof(opt))){
+		cout<<"setsockopt"<<endl;
+		exit(EXIT_FAILURE);
+	}
+
+	//In (struct sockaddr*)&serv_addr, sockaddr_in doesn't work!
+	if(connect(sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr))<0){
+		perror("Connect failed:chunkDownloadFunc");
+		pthread_exit(NULL);
+	}
+	cout<<"Connect successful:chunkDownloadFunc "<<endl;
+
+	recv(sockfd,&ack, sizeof(ack),0);//to sync
+
+	// cout<<"sync!"<<endl;
+
+	char *msg=REQ_FOR_DATA;
+	send(sockfd,msg,1028,0);//using sizeof(msg) instead of 1028 didn't send proper msg
+	cout<<"sent the msg:Client:"<<msg<<endl;
+
+	recv(sockfd,&ack, sizeof(ack),0);//to sync
+	// cout<<"sync"<<endl;
+
+
+	int file_size, temp_file_size, n, startPosInFile;
+
+	//sending to server the no. of chunks needed from it
+	int chunkCount=chunksToTake.size();
+	send(sockfd, &chunkCount, sizeof(chunkCount),0);
+	cout<<"chunkCount sent to server is:"<<chunkCount<<endl;
+
+	recv(sockfd,&ack,sizeof(ack),0);//to sync
+	// cout<<"sync!"<<endl;
+
+	//Send filename to server(the server will read from this file and send data to client)
+	send(sockfd, (char*)sourcefilenm.c_str(), sourcefilenm.length(),0);
+	cout<<"sourcefilenm sent to server:"<<sourcefilenm<<endl;
+
+	
+	// cout<<"Sync!!"<<endl;
+
+	// pthread_mutex_lock(&mlock);
+
+	for(int cn=0; cn<chunksToTake.size();cn++){
+		cout<<"entered chunk ka for loop"<<endl;
+		int chunk_no=chunksToTake[cn];
+		startPosInFile=CHUNK*(chunk_no-1);
+		recv(sockfd,&ack,sizeof(ack),0);//to sync
+		if(send(sockfd, &chunk_no, sizeof(chunk_no), 0)<0){
+			perror("Error in sending chunk no.: fileDownloadFunc");
+			pthread_exit(NULL);
+		}
+		cout<<"Sent chunkNo. to server:"<<chunk_no<<endl;
+
+		// file_size=client_data_download->fileSize;
+
+		// int my_buff_size;
+		// if(file_size<BUFF_SIZE){
+		// 	my_buff_size=file_size;
+		// }
+		// else{
+		// 	my_buff_size=BUFF_SIZE;
+		// }
+		// cout<<"my_buff_size : fileDownloadFunc : "<<my_buff_size<<endl;
+		// char buffer[my_buff_size]={'\0'};
+
+		int my_buff_size=BUFF_SIZE;
+		char buffer[BUFF_SIZE]={'\0'};
+
+		fseek(fp, startPosInFile, SEEK_SET);
+		cout<<"Downloading chunk no.:chunkDownloadFunc: "<<chunk_no<<endl;
+		cout<<"Start pos for chunk : chunkDownloadFunc : "<<startPosInFile<<endl;
+		
+
+		temp_file_size=CHUNK;//reading a CHUNK at a time
+		while (temp_file_size > 0){
+			n = recv(sockfd , buffer , my_buff_size, 0);
+			if(n==0){
+				cout<<"Received 0 byte count; So am breaking"<<endl;
+				break;
+			}
+			cout <<"recieved byte count: " << n << endl;
+			if( n < 0){
+				perror("error in receiving chunk:chunkDownloadFunc");
+				pthread_exit(NULL);
+			}
+			// cout<<"n : fileDownloadFunc: "<<n<<endl;
+			cout<<"Buff peer1:fileDownloadFunc: "<<buffer<<endl;
+			fwrite (buffer , sizeof(char), n, fp);
+			// write(file_desc, buffer, n);
+			memset ( buffer , '\0', my_buff_size);
+			cout<<"tempfilesize"<<temp_file_size<<" "<<"n "<<n<<endl;
+			temp_file_size = temp_file_size - n;
+			cout<<"tempfilesize"<<temp_file_size<<endl;
+			send(sockfd,&ack,ack,0);//to sync
+			
+			cout<<"BLAH"<<endl;
+		}
+		cout<<"1 chunk bheja!"<<endl;
+		// fseek(fp, 0, SEEK_SET);
+		// send(sockfd,&ack,ack,0);
+		// cout<<"sync!!"<<endl;
+	}
+	fclose(fp);
+	cout<<"Out of for(); Done with all chunks"<<endl;
+	
+	// pthread_mutex_unlock(&mlock);
+
+	cout<<"Exiting chunk download funct"<<endl;
+	pthread_exit(NULL);
+	cout<<"Will this even print?"<<endl;
+	
+}
+
+void connectToSeedersForData(vector<pair<string,int> >& seederVec, vector<vector<int> >& pieceSelectVec, string dest, string sourceFile, string finalSHA){
+	int seederVecSize=seederVec.size();
+	pthread_t clientDownl[seederVecSize];
+	int ack=1;
+	FILE *fp = fopen((char*)dest.c_str() , "r+");
+
+	// pthread_mutex_init(&mlock, NULL);
+	for(int i=0;i<seederVecSize;i++){
+		struct_tDownlData *dData=new struct_tDownlData;
+		dData->ip=seederVec[i].first;
+		dData->portNo=seederVec[i].second;
+		dData->fp=fp;
+		dData->filenm=sourceFile;
+		dData->chunksToDownload=pieceSelectVec[i];
+		dData->sha=finalSHA;
+
+		cout<<"Thread for server "<<i+1<<" created"<<endl;
+		pthread_create(&clientDownl[i],NULL,chunkDownloadFunc, (void*)dData);
+
+	}
+	cout<<"Have created all threads for chunk downl"<<endl;
+
+	int i=0;
+	while(i<seederVecSize){
+		pthread_join(clientDownl[i], NULL);
+		cout<<"Thread joining..."<<endl;
+		i++;
+	}
+	// pthread_mutex_destroy(&mlock);
+
+	cout<<"All threads have come back"<<endl;
+
+	// cout<<"File received!"<<endl;
+	
+	fclose(fp);
+
+}
+
+
 
 int main(){
 
@@ -703,7 +932,7 @@ void *clientThreadFunc(void *ptr){
 				cout<<"No Users logged in yet! Can't list files!!"<<endl;
 				continue;
 			}
-			string cmdToSend=cmdVec[0]+" "+grpID;
+			string cmdToSend=cmdVec[0]+" "+grpID+" "+USERID;
 			cout<<"Sending this cmd to tracker for list_files: "<<cmdToSend<<endl;
 			if(send(sockfd,cmdToSend.c_str(),cmdToSend.length(),0)<0){
 				cout<<"Unable to send cmd(in list_files):Client"<<endl;
@@ -860,7 +1089,7 @@ void *clientThreadFunc(void *ptr){
 		//**********************************************************************************//
 		else if(strcmp(cmdName, "download_file")==0){
 			cmdVec.push_back(cmdName);//Need to push_back "upload_file" too in the vector so as to make the whole command
-			cout<<"Inside download_file:Client"<<endl;
+			// cout<<"Inside download_file:Client"<<endl;
 			while((cmdName=strtok(NULL," "))!=NULL){
 				// cmdName=strtok(NULL," ");
 				cmdVec.push_back(cmdName);
@@ -870,7 +1099,7 @@ void *clientThreadFunc(void *ptr){
 				// pthread_exit(NULL);
 				continue;
 			}
-			cout<<"Entered download_file: Client"<<endl;
+			// cout<<"Entered download_file: Client"<<endl;
 			if(USERID==""){
 				cout<<"No Users logged in yet! Need to login before download_file!!"<<endl;
 				continue;
@@ -894,25 +1123,26 @@ void *clientThreadFunc(void *ptr){
 
 			createEmptyFile(dest, fileSzSource);
 			cout<<"Returned after creating empty file"<<endl;
+			// exit(0);
 
 			noOfChunksInFile=(int)fileSzSource/CHUNK;
 			if(fileSzSource%CHUNK!=0){
 				noOfChunksInFile++;
 			}
 
-			cout<<"Starting to recieve SHA from tracker"<<endl;
+			// cout<<"Starting to recieve SHA from tracker"<<endl;
 			int n;
 			char bufSHA[21]={'\0'};
 			string finalSHA="";
 			while(n=recv(sockfd, &bufSHA, sizeof(bufSHA), 0)>0){
-				cout<<"sync4"<<endl;
+				// cout<<"sync4"<<endl;
 				if(strcmp(bufSHA,"endofSHA")==0){
 					break;
 				}
 				cout<<"Recieved SHA: "<<bufSHA<<endl;
 				finalSHA+=bufSHA;
 				send(sockfd, &ack, sizeof(ack), 0);
-				cout<<"sync5"<<endl;
+				// cout<<"sync5"<<endl;
 				memset(bufSHA, '\0', sizeof(bufSHA));
 			}
 			// cout<<"Final SHA recvd:Tracker: "<<finalSHA<<endl;
@@ -949,23 +1179,53 @@ void *clientThreadFunc(void *ptr){
 			}
 
 			//connecting to the respective servers
-			int seederVecSize=seederVec.size();
-			vector<vector<int> > seederChunkVec(seederVecSize+1);
-			cout<<"seederVecSize: "<<seederVecSize<<endl;
-			cout<<"Calling connectToSeedersForVec()"<<endl;
+			int seederVecSize=seederVec.size();//=no. of seeders available to upload that file
+			vector<vector<int> > seederChunkVec(seederVecSize);
+
+			// cout<<"seederVecSize: "<<seederVecSize<<endl;
+			// cout<<"Calling connectToSeedersForVec()"<<endl;
+
 			connectToSeedersForVec(seederVec, seederChunkVec, fileNm);
-			cout<<"Have returned from connectToSeedersForVec()"<<endl;
+			// cout<<"Have returned from connectToSeedersForVec()"<<endl;
 
 			cout<<"Printing seederChunkVec so obtained:"<<endl;
 			for(int i=0;i<seederVecSize;i++){
 				cout<<"seeder no.:"<<i+1<<"with portNo.:"<<seederVec[i].second<<endl;
 				cout<<"chunk nos with this seeder:"<<endl;
 				for(auto &x : seederChunkVec[i]){
-					cout<<x<<endl;
+					cout<<x<<" ";
 				}
+				cout<<endl;
 			}
+			///////////////////////////////////////////
 
-			
+			//piece selection, now that we have info abt all the pieces and their location(Ip+port)
+			// cout<<"Calling pieceSelection()"<<endl;
+
+			vector<vector<int> > pieceSelectVec(seederVecSize);
+			pieceSelection(seederChunkVec, pieceSelectVec, noOfChunksInFile);
+
+			// cout<<"Have returned from pieceSelection()"<<endl;
+
+			cout<<"Printing pieceSelectVec so obtained:"<<endl;
+			for(int i=0;i<seederVecSize;i++){
+				cout<<"seeder no.:"<<i+1<<"with portNo.:"<<seederVec[i].second<<endl;
+				cout<<"chunk nos being selected from this seeder:"<<endl;
+				for(auto &x : pieceSelectVec[i]){
+					cout<<x<<" ";
+				}
+				cout<<endl;
+			}
+			//////////////////////////////////////////////
+
+			//connecting to servers to download data
+			// cout<<"Calling connectToSeedersForData()"<<endl;
+
+			connectToSeedersForData(seederVec, pieceSelectVec, dest, fileNm, finalSHA);
+
+			cout<<"Have returned from connectToSeedersForData()"<<endl;
+
+			///////////////////////////////////////////////
 
 		}
 
@@ -974,109 +1234,6 @@ void *clientThreadFunc(void *ptr){
 		}
 
 	}
-
-
-	/*
-	//File receiving code:
-	FILE *fp = fopen("textp1CCCCC.txt" , "wb+");
-	// int fp= fopen("afile_peer1C.txt" , "wb");
-	// int file_desc=fileno(fp);
-
-	int file_size, temp_file_size, n;
-	// int chunk_no=2;
-
-	// if(send(sockfd, &chunk_no, sizeof(chunk_no), 0)<0){
-	// 	perror("Error in sending chunk no.: Client");
-	// 	pthread_exit(NULL);
-	// }
-
-	// int startPosInFile;
-	// startPosInFile=CHUNK*(chunk_no-1);
-	// cout<<"Start pos for chunk : Client "<<startPosInFile<<endl;
-	// // fseek(fp, startPosInFile, SEEK_SET);
-
-	if(recv(sockfd, &file_size, sizeof(file_size), 0)<0){
-		perror("Error in receive file size: Client");
-		pthread_exit(NULL);
-	}
-	cout<<"File size : Client: "<< file_size<<endl;
-	temp_file_size=file_size;
-
-	int my_buff_size;
-	if(file_size<BUFF_SIZE){
-		my_buff_size=file_size;
-	}
-	else{
-		my_buff_size=BUFF_SIZE;
-	}
-	cout<<"my_buff_size : Client : "<<my_buff_size<<endl;
-
-	char buffer[my_buff_size]={'\0'};
-
-	//******creating an empty file
-
-	// int pos=lseek(file_desc, 0, SEEK_SET);
-	// cout<<"fp b4 null : CLient: "<<pos<<endl;
-	fseek(fp, 0, SEEK_SET);
-	// cout<<"fp b4 null : CLient: "<<ftell(fp)<<endl;
-	
-
-	memset ( buffer , '\0', BUFF_SIZE);
-	// exit(0);
-	n=my_buff_size;
-	while (temp_file_size > 0){
-		// cout<<"Buff peer1 client: "<<buffer<<endl;
-		fwrite (buffer , sizeof (char), n, fp);
-		// write(file_desc, buffer, n);
-		// memset ( buffer , '\0', BUFF_SIZE);
-		temp_file_size = temp_file_size - n;
-		// cout<<"BLAH"<<endl;
-	}
-
-	cout<<"Null file created : Client"<<endl;
-	// fclose(fp);
-	// close(file_desc);
-
-	// fp = fopen("textp1C.txt" , "ab+");
-	// // int fp= fopen("afile_peer1C.txt" , "wb");
-	// file_desc=fileno(fp);
-
-	//******************************************
-	// lseek(file_desc, 0, SEEK_SET);
-	// fseek(fp, 0, SEEK_SET);
-
-
-	//****writing specific chunk to file
-
-	pthread_t clientDownl[CLIENT_THREADS];
-	int chooseChunk[CLIENT_THREADS]={1,2,3};
-	int portClientThr[CLIENT_THREADS]={2051, 2052, 2053};
-	int i=0;
-
-	pthread_mutex_init(&mlock, NULL);
-	while(i<CLIENT_THREADS){
-		struct_tData *client_data_download=(struct_tData*)malloc(sizeof(struct_tData));
-		client_data_download->fp=fp;
-		client_data_download->portNo=portClientThr[i];
-		client_data_download->chunkNo=chooseChunk[i];
-		client_data_download->fileSize=file_size;
-		pthread_create(&clientDownl[i],NULL,fileDownloadFunc, (void*)client_data_download);
-
-		i++;
-
-	}
-	i=0;
-	while(i<CLIENT_THREADS){
-		pthread_join(clientDownl[i], NULL);
-		i++;
-	}
-	pthread_mutex_destroy(&mlock);
-
-	// cout<<"File received!"<<endl;
-	
-	fclose(fp);
-
-	*/
 	// close(file_desc);
 	
 	close(sockfd);
@@ -1291,17 +1448,17 @@ void *serveRequest(void *ptr){
 
 	recv(sockfd,&msg,sizeof(msg),0);
 	string msg_str=msg;
-	cout<<"Recvd the msg:Server:"<<msg<<endl;
-	cout<<"Recvd the msg_str:Server:"<<msg_str<<endl;
+	// cout<<"Recvd the msg:Server:"<<msg<<endl;
+	// cout<<"Recvd the msg_str:Server:"<<msg_str<<endl;
 
-	cout<<"msg_str:"<<msg_str<<endl;
-	cout<<"REQ_FOR_VEC:"<<REQ_FOR_VEC<<endl;
-	cout<<"check if's halat: "<<(msg_str=="Request for Vector")<<endl;
+	// cout<<"msg_str:"<<msg_str<<endl;
+	// cout<<"REQ_FOR_VEC:"<<REQ_FOR_VEC<<endl;
+	// cout<<"check if's halat: "<<(msg_str=="Request for Vector")<<endl;
 
 	if(msg_str=="Request for Vector"){
 		cout<<"It's a request for vector:Server"<<endl;
 		send(sockfd,&ack, sizeof(ack),0);//to sync
-		cout<<"sync1"<<endl;
+		// cout<<"sync1"<<endl;
 
 		//Recv filename from client
 		char filename[1028]={'\0'};
@@ -1315,7 +1472,7 @@ void *serveRequest(void *ptr){
 		cout<<"Size of chunkVec that server is sending:"<<chunkVecSize<<endl;
 
 		recv(sockfd,&ack, sizeof(ack),0);//to sync
-		cout<<"sync2"<<endl;
+		// cout<<"sync2"<<endl;
 
 		//Start sending the chunkNos in chunkVector to clientcout<<"Sending chunkNo:"<<endl;
 		cout<<"Sending chunkNo:"<<endl;
@@ -1324,113 +1481,115 @@ void *serveRequest(void *ptr){
 			send(sockfd,&chunkNo,sizeof(chunkNo),0);
 			cout<<chunkNo<<" ";
 			recv(sockfd,&ack, sizeof(ack),0);//to sync
-			cout<<"sync3"<<endl;
+			// cout<<"sync3"<<endl;
 		}
-
+		cout<<endl;
 
 	}
-	else{
-		cout<<"Wrong if"<<endl;
-	}
-	// else if(msg_str==REQ_FOR_DATA){
+	else if(msg_str==REQ_FOR_DATA){
+		cout<<"It's a request for data:Server"<<endl;
+		send(sockfd,&ack, sizeof(ack),0);//to sync
+		// cout<<"sync1"<<endl;
 
-	// }
+		//receive chunkNo from client
+		int chunkCount;
+		recv(sockfd,&chunkCount,sizeof(chunkCount),0);
+		cout<<"server recvd chunkCOunt:"<<chunkCount<<endl;
 
+		send(sockfd,&ack,sizeof(ack),0);//to sync
+		// cout<<"ack!"<<endl;
 
-	// char *filenm="text.txt";
-	// cout<<"Inside serveRequest funct"<<endl;
-	// FILE *fp=fopen(filenm, "rb");
+		//Recv filename from client
+		char filename[1028]={'\0'};
+		recv(sockfd,&filename, 1028,0);
+		string filenm=filename;
+		cout<<"source filename recvd from client"<<filenm<<endl;
 
-
-	// /* SEEK_END : It denotes end of the file.
-	//    SEEK_SET : It denotes starting of the file.
-	//    SEEK_CUR : It denotes file pointer’s current position.*/
-
-	// struct_tData *tstruct;
-	// tstruct=(struct_tData*)ptr;
-	// // cout<<"Have typecasted the void* "<<endl;
-
-	// int fd=tstruct->sockfd;
-
-	// // cout<<"received fd in parameter is: "<<fd<<endl;
-
-	// //receiving chunk no. from fileDownloadFunc(aka client thread)
-	// int chunk_no;
-	// if(recv(fd, &chunk_no, sizeof(chunk_no), 0)<0){
-	// 	perror("Error in receive chunk no.: ServReq");
-	// 	pthread_exit(NULL);
-	// }
-
-	// cout<<"Chunk no. recvd in ServReq "<<chunk_no<<endl;
-	
-
-	// /*File size:*/
-	// struct stat st;
-	// stat(filenm, &st);
-	// int file_size = st.st_size;
-	// cout<<"File size : ServReq : "<<file_size<<endl;
-
-	// /*Finding file size:	
-	// // fseek(fp, 0, SEEK_END);
-	// // //above means that we move the pointer by 0 distance with respect to end of file i.e pointer now points to end of the file. 
-	// // int file_size=ftell(fp);
-	// // cout<<"File size : ServReq : "<<file_size<<endl;
-	// // rewind(fp);
-	// */
-
-	// // if(send(fd, &file_size, sizeof(file_size), 0)<0){
-	// // 	perror("error in sending file size : ServReq");
-	// // 	pthread_exit(NULL);
-	// // }
-	// int my_buff_size;
-	// if(file_size<BUFF_SIZE){
-	// 	my_buff_size=file_size;
-	// }
-	// else{
-	// 	my_buff_size=BUFF_SIZE;
-	// }
-	// char Buffer[my_buff_size];
-	// int n;
-
-	// if(CHUNK*(chunk_no-1)<=file_size){
-	// 	int startPosInFile=CHUNK*(chunk_no-1);
-	// 	fseek(fp, startPosInFile, SEEK_SET);
-	// 	cout<<"File ptr pos before : ServReq : "<<ftell(fp)<<endl;
-
-	// 	cout<<"fp start pos : ServReq : "<<startPosInFile<<endl;
-	// 	// cout<<"SEEK_SET : ServReq : "<<SEEK_SET<<endl;
-
-
-	// 	int temp_file_size=CHUNK;
-
-	// 	cout<<"my_buff_size : ServReq : "<<my_buff_size<<endl;
-	// 	cout<<"temp_file_size : ServReq :"<<temp_file_size<<endl;
-
-	// 	// while(())
-	// 	while(temp_file_size>0){
-	// 		n=fread(Buffer, sizeof(char), my_buff_size, fp);
-	// 		cout<<"in buff: ServReq: "<<Buffer<<endl;
-	// 		if(n < 0) {
-	// 			cout << "extra read !!" << endl;
-	// 			break;
-	// 		}
-			
-	// 		if(send(fd, Buffer, n, 0)<0){
-	// 			perror("error in sending file : ServReq");
-	// 			pthread_exit(NULL);
-	// 		}
-			
-	// 		memset(Buffer, '\0', my_buff_size);
-	// 		temp_file_size=temp_file_size-n;
-	// 	}
-
-	// 	cout<<"File ptr pos now : ServReq : "<<ftell(fp)<<endl;
-	// }
-	// close(fd);	
-	// fclose(fp);
-	
 		
-	// cout<<"Send succesful : ServeReq"<<endl;
+		// cout<<"ack!!"<<endl;
+		cout<<"Going to open file in server"<<endl;
+		FILE *fp=fopen(filenm.c_str(), "rb");
+		cout<<"Sble to open file in server"<<endl;
 
-	pthread_exit(NULL);
+		for(int cn=0; cn<chunkCount;cn++){
+			int chunk_no;
+			send(sockfd,&ack,sizeof(ack),0);//to sync
+			if(recv(sockfd, &chunk_no, sizeof(chunk_no), 0)<0){
+				perror("Error in receive chunk no.: ServReq");
+				pthread_exit(NULL);
+			}
+			cout<<"Chunk no. recvd in ServReq "<<chunk_no<<endl;
+			
+			/*File size:*/
+			struct stat st;
+			stat(filenm.c_str(), &st);
+			int file_size = st.st_size;
+			cout<<"File size : ServReq : "<<file_size<<endl;
+
+			int my_buff_size=BUFF_SIZE;
+			if(file_size<BUFF_SIZE){
+				my_buff_size=file_size;
+			}
+			else{
+				my_buff_size=BUFF_SIZE;
+			}
+			char Buffer[my_buff_size];
+			int n;
+
+			fseek(fp,0,SEEK_SET);
+
+			// if(CHUNK*(chunk_no-1)<=file_size){
+				int startPosInFile=CHUNK*(chunk_no-1);
+				fseek(fp, startPosInFile, SEEK_SET);
+				cout<<"File ptr pos before : ServReq : "<<ftell(fp)<<endl;
+
+				cout<<"startPosInFile:ServReq : "<<startPosInFile<<endl;
+				// cout<<"SEEK_SET : ServReq : "<<SEEK_SET<<endl;
+
+
+				int temp_file_size=CHUNK;
+
+				// cout<<"my_buff_size : ServReq : "<<my_buff_size<<endl;
+				// cout<<"temp_file_size : ServReq :"<<temp_file_size<<endl;
+				n=0;
+				while(temp_file_size>0){
+					n=fread(Buffer, sizeof(char), my_buff_size, fp);
+					cout<<"In buff:ServReq: "<<Buffer<<endl;
+					if(n < 0) {
+						cout << "extra read !!" << endl;
+						break;
+					}
+					if(n==0){
+						cout<<"Read 0 bytes; so am breaking outta the loop"<<endl;
+						break;
+					}
+					
+					if(send(sockfd, Buffer, n, 0)<0){
+						perror("error in sending file : ServReq");
+						pthread_exit(NULL);
+					}
+					
+					memset(Buffer, '\0', my_buff_size);
+					cout<<"n "<<n<<" tempfilesize "<<temp_file_size<<endl;
+					temp_file_size=temp_file_size-n;
+					cout<<"n "<<n<<" tempfilesize "<<temp_file_size<<endl;
+
+					recv(sockfd,&ack,ack,0);//to sync
+					cout<<"1 chunk mila!"<<endl;
+				}
+
+
+				cout<<"File ptr pos now : ServReq : "<<ftell(fp)<<endl;
+			// }			
+
+		}
+		close(sockfd);	
+		fclose(fp);
+		cout<<"Out of for(); Done with all chunks"<<endl;
+		
+		pthread_exit(NULL);
+		cout<<"Will this even print??"<<endl;
+
+
+	}
 }

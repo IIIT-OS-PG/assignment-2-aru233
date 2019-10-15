@@ -528,7 +528,7 @@ void *serveReqAtTracker(void *ptr){
 		}
 
 		//**********************************************************************************//
-		//rcvd cmd-> list_files gid
+		//rcvd cmd-> list_files gid uid
 		else if(strcmp(cmdName, "list_files")==0){
 			int flag=0;
 			cout<<"list_files case:Tracker"<<endl;
@@ -536,46 +536,55 @@ void *serveReqAtTracker(void *ptr){
 				cmdVec.push_back(cmdName);
 			}
 			string grpId=cmdVec[0];
+			string userId=cmdVec[1];
 			int pos;
 			for(auto i : groupMap){
 				if(i.first==grpId){//group exists
-					int sze=(groupMap[grpId]->fileNm).size();
-					cout<<"Sending the size of list of fileNames to client; size:"<<sze<<endl;
-					send(sockfd, &sze, sizeof(sze), 0);
-					// cout<<"Send1"<<endl;
+					//check if user part of the group
+					// if(inList((groupMap[i]->ListOfSeeders),userId)!=-1){//user is in group
+						int sze=(groupMap[grpId]->fileNm).size();
+						cout<<"Sending the size of list of fileNames to client; size:"<<sze<<endl;
+						send(sockfd, &sze, sizeof(sze), 0);
+						// cout<<"Send1"<<endl;
 
-					//Receiving ack for listSize reception from client
-					recv(sockfd, &ack, sizeof(ack),0);
-					// cout<<"Rcvd ack1"<<endl;
+						//Receiving ack for listSize reception from client
+						recv(sockfd, &ack, sizeof(ack),0);
+						// cout<<"Rcvd ack1"<<endl;
 
-					cout<<"Sending the fileNames to client"<<endl;
-					for(int i=0;i<sze;i++){
-						pair<string, int> listelm;
-						listelm=(groupMap[grpId]->fileNm)[i];
-						if(listelm.second==1){//file is shareable
-							string listele=listelm.first;
-							cout<<listele<<" ";
-							send(sockfd, (char*)listele.c_str(), listele.length(), 0);
-							// cout<<"Send2"<<endl;
-							recv(sockfd, &ack, sizeof(ack),0);
-							// cout<<"Rcvd ack2"<<endl;
+						cout<<"Sending the fileNames to client"<<endl;
+						for(int i=0;i<sze;i++){
+							pair<string, int> listelm;
+							listelm=(groupMap[grpId]->fileNm)[i];
+							if(listelm.second==1){//file is shareable
+								string listele=listelm.first;
+								cout<<listele<<" ";
+								send(sockfd, (char*)listele.c_str(), listele.length(), 0);
+								// cout<<"Send2"<<endl;
+								recv(sockfd, &ack, sizeof(ack),0);
+								// cout<<"Rcvd ack2"<<endl;
+							}
+							else{
+								string listele="Do0Not1Include2";
+								send(sockfd, (char*)listele.c_str(), listele.length(), 0);
+								// cout<<"Send2"<<endl;
+								recv(sockfd, &ack, sizeof(ack),0);
+							}						
 						}
-						else{
-							string listele="Do0Not1Include2";
-							send(sockfd, (char*)listele.c_str(), listele.length(), 0);
-							// cout<<"Send2"<<endl;
-							recv(sockfd, &ack, sizeof(ack),0);
-						}						
-					}
-					cout<<endl;
-					cout<<"Sent the list to client"<<endl;
-					ack=1;
-					send(sockfd, &ack, sizeof(ack), 0);
-					// cout<<"Send3"<<endl;
-					cout<<"tracker sent ack to client; ack:"<<ack<<endl;
-					flag=1;
-					break;				
+						cout<<endl;
+						cout<<"Sent the list to client"<<endl;
+						ack=1;
+						send(sockfd, &ack, sizeof(ack), 0);
+						// cout<<"Send3"<<endl;
+						cout<<"tracker sent ack to client; ack:"<<ack<<endl;
+						flag=1;
+						break;			
+					// }
+					// else{//group exists but user not in group
+						
+					// }
+						
 				}
+					
 			}
 			if(flag==1){
 				continue;
@@ -784,7 +793,7 @@ void *serveReqAtTracker(void *ptr){
 				}
 			}
 
-
+			
 
 
 
